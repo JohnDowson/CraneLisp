@@ -1,9 +1,12 @@
 use crate::CranelispError;
 use crate::Result;
+use crate::SyntaxError;
 use crate::ToResult;
 use log::trace;
 use std::ops::Range;
 use std::{fmt::Debug, io::Read};
+
+#[derive(Clone)]
 pub enum Token {
     LParen(usize),
     RParen(usize),
@@ -13,15 +16,41 @@ pub enum Token {
     Quote(usize),
 }
 
+impl Token {
+    pub fn span(&self) -> Range<usize> {
+        self.span_start()..self.span_end()
+    }
+    pub fn span_start(&self) -> usize {
+        match self {
+            Token::LParen(s) => *s,
+            Token::RParen(s) => *s,
+            Token::Number(_, s) => s.start,
+            Token::Symbol(_, s) => s.start,
+            Token::Comment(_) => 0,
+            Token::Quote(s) => *s,
+        }
+    }
+    pub fn span_end(&self) -> usize {
+        match self {
+            Token::LParen(s) => *s,
+            Token::RParen(s) => *s,
+            Token::Number(_, s) => s.end,
+            Token::Symbol(_, s) => s.end,
+            Token::Comment(_) => 0,
+            Token::Quote(s) => *s,
+        }
+    }
+}
+
 impl Debug for Token {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
         match self {
-            Token::LParen(_) => write!(fmt, "(",),
-            Token::RParen(_) => write!(fmt, ") ",),
-            Token::Number(n, _) => write!(fmt, "{} ", n,),
-            Token::Symbol(s, _) => write!(fmt, "{} ", s,),
-            Token::Comment(c) => write!(fmt, "# {} ", c,),
-            Token::Quote(_) => write!(fmt, "'"),
+            Token::LParen(_) => write!(fmt, "t:(",),
+            Token::RParen(_) => write!(fmt, "t:) ",),
+            Token::Number(n, _) => write!(fmt, "t:{} ", n,),
+            Token::Symbol(s, _) => write!(fmt, "t:{} ", s,),
+            Token::Comment(c) => write!(fmt, " #{} ", c,),
+            Token::Quote(_) => write!(fmt, "e'"),
         }
     }
 }
@@ -29,13 +58,14 @@ impl Debug for Token {
 #[derive(Clone)]
 pub struct Lexer {
     src: Vec<char>,
+    _src: *mut str,
     next: usize,
 }
 impl Debug for Lexer {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
         writeln!(fmt, "next: {}:{:?}, in:", self.next, self.src[self.next])?;
         for c in self.src.iter() {
-            write!(fmt, "'{}', ", c)?
+            write!(fmt, "{:?}, ", c)?
         }
         writeln!(fmt)?;
         for (e, _) in self.src.iter().enumerate() {
@@ -45,69 +75,81 @@ impl Debug for Lexer {
     }
 }
 
+impl Drop for Lexer {
+    fn drop(&mut self) {
+        unsafe {
+            Box::from_raw(self._src);
+        }
+    }
+}
+
 impl Lexer {
     pub fn new<R: Read>(mut reader: R) -> Result<Self> {
         let mut _src = String::new();
         reader.read_to_string(&mut _src)?;
         let _src = Box::leak(_src.into_boxed_str());
-        Ok(Self {
+        Self {
             src: _src.chars().collect(),
+            _src,
             next: 0,
-        })
+        }
+        .okay()
     }
 
     fn consume_number(&mut self) -> Result<Token> {
         let start = self.next;
-        let number = self.consume_until(&[' ', ')', '\n']);
+        let number = self.consume_until(|c| !c.is_numeric());
         let end = self.next;
-        trace!("Consuming Number at location {:?}", start..end);
+        //trace!("Consuming Number at location {:?}", start..end);
         Token::Number(number.parse()?, start..end).okay()
     }
 
     fn consume_symbol(&mut self) -> Result<Token> {
         let start = self.next;
-        let symbol = self.consume_until(&[' ', ')', '\n']);
+        let symbol = self.consume_until(|c| !c.is_alphanumeric());
         let end = self.next;
-        trace!("Consuming Symbol at location {:?}", start..end);
+        //trace!("Consuming Symbol at location {:?}", start..end);
         Ok(Token::Symbol(symbol, start..end))
     }
 
     pub fn next_token(&mut self) -> Result<Token> {
         if let Some(char) = self.peek() {
-            trace!("{:?}", &*self);
+            //trace!("{:?}", &*self);
 
             match char {
                 c if c.is_whitespace() => {
-                    trace!("Consuming whitespace at location {}", self.next);
+                    //trace!("Consuming whitespace at location {}", self.next);
                     self.consume();
                     self.next_token()
                 }
                 '(' => {
-                    trace!("Consuming LParen at location {}", self.next);
+                    //trace!("Consuming LParen at location {}", self.next);
                     self.consume();
                     Token::LParen(self.next - 1).okay()
                 }
                 ')' => {
-                    trace!("Consuming RParen at location {}", self.next);
+                    //trace!("Consuming RParen at location {}", self.next);
                     self.consume();
                     Token::RParen(self.next - 1).okay()
                 }
                 c if c.is_numeric() => self.consume_number(),
                 c if c.is_alphanumeric() => self.consume_symbol(),
                 '#' => {
-                    trace!("Consuming Comment at location {}", self.next);
-                    let comment = self.consume_until(&['\n']);
+                    //trace!("Consuming Comment at location {}", self.next);
+                    self.consume();
+                    let comment = self.consume_until(|c| c == '\n' || c == '#');
+                    self.consume();
                     Token::Comment(comment).okay()
                 }
                 '\'' => {
-                    trace!("Consuming Quote at location {}", self.next);
+                    //trace!("Consuming Quote at location {}", self.next);
                     self.consume();
                     Token::Quote(self.next - 1).okay()
                 }
-                c => CranelispError::Syntax(
+                c => CranelispError::Syntax(SyntaxError::UnexpectedCharacter(
                     self.next..self.next,
-                    format!("Unexpected character {:?}", c),
-                )
+                    *c,
+                ))
                 .error(),
             }
         } else {
@@ -115,14 +157,14 @@ impl Lexer {
         }
     }
 
-    fn peek(&self) -> Option<&char> {
+    pub fn peek(&self) -> Option<&char> {
         self.src.get(self.next)
     }
 
-    fn consume_until(&mut self, del: &[char]) -> String {
+    fn consume_until(&mut self, del: impl Fn(char) -> bool) -> String {
         let mut v = vec![];
         while let Some(&c) = self.peek() {
-            if del.contains(&c) {
+            if del(c) {
                 return v.into_iter().collect();
             } else {
                 self.consume();
