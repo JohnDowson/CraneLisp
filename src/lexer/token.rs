@@ -8,6 +8,7 @@ pub enum Token {
     Symbol(String, Span),
     String(String, Span),
     Quote(usize),
+    Defun(usize),
 }
 
 impl Token {
@@ -22,6 +23,7 @@ impl Token {
             Token::Symbol(_, s) => s.start,
             Token::String(_, s) => s.start,
             Token::Quote(s) => *s,
+            Token::Defun(s) => *s,
         }
     }
     pub fn span_end(&self) -> usize {
@@ -32,6 +34,7 @@ impl Token {
             Token::Symbol(_, s) => s.end,
             Token::String(_, s) => s.end,
             Token::Quote(s) => *s,
+            Token::Defun(s) => *s,
         }
     }
 }
@@ -45,6 +48,7 @@ impl Debug for Token {
             Token::Symbol(s, _) => write!(fmt, "{}", s,),
             Token::String(s, _) => write!(fmt, "{:?}", s,),
             Token::Quote(_) => write!(fmt, "'"),
+            Token::Defun(_) => write!(fmt, ":"),
         }
     }
 }

@@ -3,6 +3,7 @@ use std::{
     io::Cursor,
     ops::Range,
 };
+mod eval;
 mod lexer;
 mod parser;
 
@@ -31,6 +32,9 @@ pub enum SyntaxError {
     UnmatchedParen(Span, Span),
     UnexpectedCharacter(Span, char),
     InvalidLiteral(Span, String),
+    FunctionHasNoBody(Span, Span),
+    FunctionHasNoArglist(Span, Span),
+    InvalidDefun(Span, Span, Span),
 }
 impl SyntaxError {
     fn spans(&self) -> Vec<Span> {
@@ -38,6 +42,9 @@ impl SyntaxError {
             SyntaxError::UnmatchedParen(a, b, ..) => vec![a.clone(), b.clone()],
             SyntaxError::UnexpectedCharacter(a, ..) => vec![a.clone()],
             SyntaxError::InvalidLiteral(a, ..) => vec![a.clone()],
+            SyntaxError::FunctionHasNoBody(a, b) => vec![a.clone(), b.clone()],
+            SyntaxError::FunctionHasNoArglist(a, b) => vec![a.clone(), b.clone()],
+            SyntaxError::InvalidDefun(a, b, c) => vec![a.clone(), b.clone(), c.clone()],
         }
     }
 }
@@ -47,6 +54,9 @@ impl Display for SyntaxError {
             SyntaxError::UnmatchedParen(_, _) => "Unmatched paren".into(),
             SyntaxError::UnexpectedCharacter(_, c) => format!("Unexpected character {}", c),
             SyntaxError::InvalidLiteral(_, s) => format!("Invalid numeric literal {}", s),
+            SyntaxError::FunctionHasNoBody(_, _) => "Functions must have body".to_string(),
+            SyntaxError::FunctionHasNoArglist(_, _) => "Functions must have arglist".to_string(),
+            SyntaxError::InvalidDefun(..) => "Functions must have arglist and body".to_string(),
         };
         write!(f, "{}", msg)
     }
@@ -68,7 +78,7 @@ fn main() -> Result<()> {
         .filter_or("CL_LOG_LEVEL", "trace")
         .write_style_or("CL_LOG_STYLE", "always");
     env_logger::init_from_env(env);
-    const PROG: &str = "(99 .9)";
+    const PROG: &str = ":";
     let parser = Parser::new(Cursor::new(PROG))?;
     let tree = parser.parse();
     if let Err(e) = tree {

@@ -112,6 +112,10 @@ impl Lexer {
                     self.consume();
                     self.next_token()
                 }
+                ':' => {
+                    self.consume();
+                    Token::Defun(self.next - 1).okay()
+                }
                 '"' => {
                     self.consume();
                     let string = self.consume_until(|c| c == '"');

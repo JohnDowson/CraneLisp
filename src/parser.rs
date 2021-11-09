@@ -13,6 +13,7 @@ pub enum Expr {
     Number(f64, Meta),
     List(Vec<Expr>, Meta),
     Quoted(Box<Expr>, Meta),
+    Defun(Box<Expr>, Box<Expr>, Meta),
 }
 
 impl Expr {
@@ -23,6 +24,7 @@ impl Expr {
             Expr::Number(_, m) => m,
             Expr::List(_, m) => m,
             Expr::Quoted(_, m) => m,
+            Expr::Defun(_, _, m) => m,
         }
         .clone()
     }
@@ -34,6 +36,7 @@ impl Expr {
             Expr::Number(_, m) => m,
             Expr::List(_, m) => m,
             Expr::Quoted(_, m) => m,
+            Expr::Defun(_, _, m) => m,
         }
         .span
         .clone()
@@ -120,6 +123,31 @@ impl Parser {
                 Expr::Quoted(Box::new(expr), meta).okay()
             }
             Ok(Token::String(..)) => todo!(),
+
+            Ok(token @ Token::Defun(..)) => {
+                let args = self.parse_expr()?;
+                let body = self.parse_expr()?;
+                match (args, body) {
+                    (args @ Expr::List(..), body @ Expr::List(..)) => {
+                        let span = token.span_start()..body.span().end;
+                        Expr::Defun(Box::new(args), Box::new(body), Meta { span }).okay()
+                    }
+                    (Expr::List(..), body) => CranelispError::Syntax(
+                        SyntaxError::FunctionHasNoBody(token.span(), body.span()),
+                    )
+                    .error(),
+                    (args, Expr::List(..)) => CranelispError::Syntax(
+                        SyntaxError::FunctionHasNoArglist(token.span(), args.span()),
+                    )
+                    .error(),
+                    (args, body) => CranelispError::Syntax(SyntaxError::InvalidDefun(
+                        token.span(),
+                        args.span(),
+                        body.span(),
+                    ))
+                    .error(),
+                }
+            }
             Err(e) => e.error(),
         }
     }
