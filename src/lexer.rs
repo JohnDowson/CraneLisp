@@ -1,8 +1,8 @@
 use crate::CranelispError;
 use crate::Result;
 use crate::SyntaxError;
-use crate::ToResult;
 use log::trace;
+use somok::Somok;
 use std::ops::Range;
 use std::{fmt::Debug, io::Read};
 
@@ -12,7 +12,6 @@ pub enum Token {
     RParen(usize),
     Number(f64, Range<usize>),
     Symbol(String, Range<usize>),
-    Comment(String),
     Quote(usize),
 }
 
@@ -26,7 +25,6 @@ impl Token {
             Token::RParen(s) => *s,
             Token::Number(_, s) => s.start,
             Token::Symbol(_, s) => s.start,
-            Token::Comment(_) => 0,
             Token::Quote(s) => *s,
         }
     }
@@ -36,7 +34,6 @@ impl Token {
             Token::RParen(s) => *s,
             Token::Number(_, s) => s.end,
             Token::Symbol(_, s) => s.end,
-            Token::Comment(_) => 0,
             Token::Quote(s) => *s,
         }
     }
@@ -45,12 +42,11 @@ impl Token {
 impl Debug for Token {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
         match self {
-            Token::LParen(_) => write!(fmt, "t:(",),
-            Token::RParen(_) => write!(fmt, "t:) ",),
-            Token::Number(n, _) => write!(fmt, "t:{} ", n,),
-            Token::Symbol(s, _) => write!(fmt, "t:{} ", s,),
-            Token::Comment(c) => write!(fmt, " #{} ", c,),
-            Token::Quote(_) => write!(fmt, "e'"),
+            Token::LParen(_) => write!(fmt, "(",),
+            Token::RParen(_) => write!(fmt, ")",),
+            Token::Number(n, _) => write!(fmt, "{:?}", n,),
+            Token::Symbol(s, _) => write!(fmt, "{:?}", s,),
+            Token::Quote(_) => write!(fmt, "'"),
         }
     }
 }
@@ -63,6 +59,9 @@ pub struct Lexer {
 }
 impl Debug for Lexer {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        if self.next == self.src.len() {
+            return write!(fmt, "Finished");
+        }
         writeln!(fmt, "next: {}:{:?}, in:", self.next, self.src[self.next])?;
         for c in self.src.iter() {
             write!(fmt, "{:?}, ", c)?
@@ -98,23 +97,83 @@ impl Lexer {
 
     fn consume_number(&mut self) -> Result<Token> {
         let start = self.next;
-        let number = self.consume_until(|c| !c.is_numeric());
+        let mut number = String::new();
+        match self.peek() {
+            Some('.') => {
+                self.consume();
+                number.push('.');
+                number.push_str(&self.consume_until(|c| !c.is_numeric()));
+            }
+            Some(c) if c.is_numeric() => {
+                let integer = self.consume_until(|c| !c.is_numeric());
+                let mut decimal = String::new();
+                match self.peek() {
+                    Some('.') => {
+                        self.consume();
+                        if let Some(c) = self.peek() {
+                            if !c.is_numeric() {
+                                return CranelispError::Syntax(SyntaxError::InvalidLiteral(
+                                    start..self.next,
+                                    format!(" {:?}", c),
+                                ))
+                                .error();
+                            }
+                        }
+                        decimal = self.consume_until(|c| !c.is_numeric());
+                    }
+                    Some(c) if c.is_whitespace() => {}
+                    Some(c) => {
+                        return CranelispError::Syntax(SyntaxError::InvalidLiteral(
+                            start..self.next,
+                            format!(" {:?}", c),
+                        ))
+                        .error();
+                    }
+                    None => (),
+                }
+                number = [integer, decimal].join(".")
+            }
+            Some(c) => {
+                return CranelispError::Syntax(SyntaxError::InvalidLiteral(
+                    start..self.next,
+                    format!(" {:?}", c),
+                ))
+                .error();
+            }
+            None => (),
+        }
         let end = self.next;
-        //trace!("Consuming Number at location {:?}", start..end);
-        Token::Number(number.parse()?, start..end).okay()
+        Token::Number(
+            number.parse().map_err(|_| {
+                CranelispError::Syntax(SyntaxError::InvalidLiteral(start..end, number))
+            })?,
+            start..end,
+        )
+        .okay()
     }
 
     fn consume_symbol(&mut self) -> Result<Token> {
         let start = self.next;
-        let symbol = self.consume_until(|c| !c.is_alphanumeric());
+        let symbol = self.consume_until(|c| c.is_whitespace() || ['(', ')'].contains(&c));
         let end = self.next;
-        //trace!("Consuming Symbol at location {:?}", start..end);
+        // trace!(
+        //     "Consuming Symbol: {:?} at location {:?}",
+        //     symbol,
+        //     start..end
+        // );
         Ok(Token::Symbol(symbol, start..end))
+    }
+
+    pub fn peek_token(&mut self) -> Result<Token> {
+        let next = self.next;
+        let token = self.next_token();
+        self.next = next;
+        token
     }
 
     pub fn next_token(&mut self) -> Result<Token> {
         if let Some(char) = self.peek() {
-            //trace!("{:?}", &*self);
+            // trace!("{:?}", &*self);
 
             match char {
                 c if c.is_whitespace() => {
@@ -132,14 +191,16 @@ impl Lexer {
                     self.consume();
                     Token::RParen(self.next - 1).okay()
                 }
-                c if c.is_numeric() => self.consume_number(),
+                c if c.is_numeric() || c == &'.' => self.consume_number(),
                 c if c.is_alphanumeric() => self.consume_symbol(),
                 '#' => {
                     //trace!("Consuming Comment at location {}", self.next);
                     self.consume();
-                    let comment = self.consume_until(|c| c == '\n' || c == '#');
-                    self.consume();
-                    Token::Comment(comment).okay()
+                    let _ = self.consume_until(|c| c == '\n' || c == '#');
+                    if matches!(self.peek(), Some('#')) {
+                        self.consume()
+                    };
+                    self.next_token()
                 }
                 '\'' => {
                     //trace!("Consuming Quote at location {}", self.next);
@@ -171,7 +232,7 @@ impl Lexer {
                 v.push(c);
             };
         }
-        "".into()
+        v.into_iter().collect()
     }
 
     fn consume(&mut self) {
