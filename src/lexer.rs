@@ -1,85 +1,16 @@
 use crate::CranelispError;
 use crate::Result;
 use crate::SyntaxError;
-use log::trace;
 use somok::Somok;
-use std::ops::Range;
 use std::{fmt::Debug, io::Read};
-
-#[derive(Clone)]
-pub enum Token {
-    LParen(usize),
-    RParen(usize),
-    Number(f64, Range<usize>),
-    Symbol(String, Range<usize>),
-    Quote(usize),
-}
-
-impl Token {
-    pub fn span(&self) -> Range<usize> {
-        self.span_start()..self.span_end()
-    }
-    pub fn span_start(&self) -> usize {
-        match self {
-            Token::LParen(s) => *s,
-            Token::RParen(s) => *s,
-            Token::Number(_, s) => s.start,
-            Token::Symbol(_, s) => s.start,
-            Token::Quote(s) => *s,
-        }
-    }
-    pub fn span_end(&self) -> usize {
-        match self {
-            Token::LParen(s) => *s,
-            Token::RParen(s) => *s,
-            Token::Number(_, s) => s.end,
-            Token::Symbol(_, s) => s.end,
-            Token::Quote(s) => *s,
-        }
-    }
-}
-
-impl Debug for Token {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-        match self {
-            Token::LParen(_) => write!(fmt, "(",),
-            Token::RParen(_) => write!(fmt, ")",),
-            Token::Number(n, _) => write!(fmt, "{:?}", n,),
-            Token::Symbol(s, _) => write!(fmt, "{:?}", s,),
-            Token::Quote(_) => write!(fmt, "'"),
-        }
-    }
-}
+mod token;
+pub use token::Token;
 
 #[derive(Clone)]
 pub struct Lexer {
     src: Vec<char>,
     _src: *mut str,
     next: usize,
-}
-impl Debug for Lexer {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-        if self.next == self.src.len() {
-            return write!(fmt, "Finished");
-        }
-        writeln!(fmt, "next: {}:{:?}, in:", self.next, self.src[self.next])?;
-        for c in self.src.iter() {
-            write!(fmt, "{:?}, ", c)?
-        }
-        writeln!(fmt)?;
-        for (e, _) in self.src.iter().enumerate() {
-            write!(fmt, "{:03}, ", e)?
-        }
-        Ok(())
-    }
-}
-
-impl Drop for Lexer {
-    fn drop(&mut self) {
-        unsafe {
-            Box::from_raw(self._src);
-        }
-    }
 }
 
 impl Lexer {
@@ -111,7 +42,7 @@ impl Lexer {
                     Some('.') => {
                         self.consume();
                         if let Some(c) = self.peek() {
-                            if !c.is_numeric() {
+                            if !c.is_numeric() && c != &')' {
                                 return CranelispError::Syntax(SyntaxError::InvalidLiteral(
                                     start..self.next,
                                     format!(" {:?}", c),
@@ -181,6 +112,11 @@ impl Lexer {
                     self.consume();
                     self.next_token()
                 }
+                '"' => {
+                    self.consume();
+                    let string = self.consume_until(|c| c == '"');
+                    Token::String(string, 0..0).okay()
+                }
                 '(' => {
                     //trace!("Consuming LParen at location {}", self.next);
                     self.consume();
@@ -218,7 +154,7 @@ impl Lexer {
         }
     }
 
-    pub fn peek(&self) -> Option<&char> {
+    fn peek(&self) -> Option<&char> {
         self.src.get(self.next)
     }
 
@@ -236,6 +172,31 @@ impl Lexer {
     }
 
     fn consume(&mut self) {
+        if self.next == self.src.len() {
+            return;
+        }
         self.next += 1
+    }
+}
+
+impl Debug for Lexer {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        writeln!(fmt, "next: {}:{:?}, in:", self.next, self.src[self.next])?;
+        for c in self.src.iter() {
+            write!(fmt, "{:?}, ", c)?
+        }
+        writeln!(fmt)?;
+        for (e, _) in self.src.iter().enumerate() {
+            write!(fmt, "{:03}, ", e)?
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Lexer {
+    fn drop(&mut self) {
+        unsafe {
+            Box::from_raw(self._src);
+        }
     }
 }

@@ -2,7 +2,7 @@ use std::io::Read;
 use std::ops::Range;
 
 use crate::lexer::{Lexer, Token};
-use crate::{CranelispError, Result, SyntaxError};
+use crate::{CranelispError, Result, Span, SyntaxError};
 use log::trace;
 use somok::Somok;
 
@@ -24,6 +24,18 @@ impl Expr {
             Expr::List(_, m) => m,
             Expr::Quoted(_, m) => m,
         }
+        .clone()
+    }
+
+    fn span(&self) -> Span {
+        match self {
+            Expr::Call(_, _, m) => m,
+            Expr::Symbol(_, m) => m,
+            Expr::Number(_, m) => m,
+            Expr::List(_, m) => m,
+            Expr::Quoted(_, m) => m,
+        }
+        .span
         .clone()
     }
 
@@ -92,7 +104,6 @@ impl Parser {
 
             Ok(token @ Token::Quote(_)) => {
                 if let Ok(paren) = self.lexer.next_token() {
-                    trace!("Parsing quoted list: {:?}", paren);
                     if matches!(paren, Token::LParen(..)) {
                         self.previous_tokens.push(token);
                         self.previous_tokens.push(paren)
@@ -104,17 +115,16 @@ impl Parser {
                         .error();
                     }
                 }
-                let list = dbg! {self.parse_list()}?;
-                let meta = list.meta();
-                trace!("Parsed quoted list:{:?}", self.lexer);
-                Expr::Quoted(Box::new(list), meta).okay()
+                let expr = self.parse_expr()?;
+                let meta = expr.meta();
+                Expr::Quoted(Box::new(expr), meta).okay()
             }
+            Ok(Token::String(..)) => todo!(),
             Err(e) => e.error(),
         }
     }
 
     fn parse_list(&mut self) -> Result<Expr> {
-        trace!("parsing list\n{:?}", self.lexer);
         // Safety: we have just pushed to previous_tokens
         let first_token = self.previous_tokens.last().unwrap().clone();
         let mut exprs = Vec::new();

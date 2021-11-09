@@ -68,7 +68,7 @@ fn main() -> Result<()> {
         .filter_or("CL_LOG_LEVEL", "trace")
         .write_style_or("CL_LOG_STYLE", "always");
     env_logger::init_from_env(env);
-    const PROG: &str = "'( symbol )(99 .9 9. 9.9)";
+    const PROG: &str = "(99 .9)";
     let parser = Parser::new(Cursor::new(PROG))?;
     let tree = parser.parse();
     if let Err(e) = tree {
@@ -122,12 +122,46 @@ mod test {
     }
 
     #[test]
+    fn invalid_numeric_literal() {
+        let progs = ["1/1", "2a", "3.b"];
+
+        for prog in progs {
+            let mut lexer = Lexer::new(Cursor::new(prog)).unwrap();
+            assert!(matches!(
+                lexer.next_token(),
+                Err(CranelispError::Syntax(SyntaxError::InvalidLiteral(..)))
+            ))
+        }
+    }
+
+    #[test]
+    fn number_in_list() {
+        let prog = Cursor::new("(1.1 2 .3 4.)");
+        let mut lexer = Lexer::new(prog).unwrap();
+        let expected = ["Ok(()", "Ok(1.1)", "Ok(2.0)", "Ok(0.3)", "Ok(4.0)", "Ok())"];
+        for expected in expected {
+            assert_eq!(format!("{:?}", lexer.next_token()), expected)
+        }
+    }
+
+    #[test]
     fn symbol_standalone() {
         let prog = Cursor::new("sym sym2 sym_-bol");
         let mut lexer = Lexer::new(prog).unwrap();
-        let expected = [r#"Ok("sym")"#, r#"Ok("sym2")"#, r#"Ok("sym_-bol")"#];
+        let expected = ["Ok(sym)", "Ok(sym2)", "Ok(sym_-bol)"];
         for expected in expected {
             let token = lexer.next_token();
+            assert_eq!(format!("{:?}", token), expected)
+        }
+    }
+
+    #[test]
+    fn symbol_in_list() {
+        let prog = Cursor::new("(symbol1 symbol2)");
+        let mut lexer = Lexer::new(prog).unwrap();
+        let expected = ["Ok(()", "Ok(symbol1)", "Ok(symbol2)", "Ok())"];
+        for expected in expected {
+            let token = dbg! {lexer.next_token()};
             assert_eq!(format!("{:?}", token), expected)
         }
     }
@@ -144,30 +178,13 @@ mod test {
     }
 
     #[test]
-    fn symbol_in_list() {
-        let prog = Cursor::new("(symbol1 symbol2)");
+    fn string() {
+        let prog = Cursor::new(r#""Foobar""#);
         let mut lexer = Lexer::new(prog).unwrap();
-        let expected = [
-            r#"Ok(()"#,
-            r#"Ok("symbol1")"#,
-            r#"Ok("symbol2")"#,
-            r#"Ok())"#,
-        ];
+        let expected = [r#"Ok("Foobar")"#];
         for expected in expected {
-            let token = dbg! {lexer.next_token()};
+            let token = lexer.next_token();
             assert_eq!(format!("{:?}", token), expected)
-        }
-    }
-    #[test]
-    fn invalid_numeric_literal() {
-        let progs = ["1/1", "2a", "3.b"];
-
-        for prog in progs {
-            let mut lexer = Lexer::new(Cursor::new(prog)).unwrap();
-            assert!(matches!(
-                lexer.next_token(),
-                Err(CranelispError::Syntax(SyntaxError::InvalidLiteral(..)))
-            ))
         }
     }
 }
