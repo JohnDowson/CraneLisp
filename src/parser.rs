@@ -6,9 +6,8 @@ use crate::{CranelispError, Result, Span, SyntaxError};
 use log::trace;
 use somok::Somok;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
-    Call(String, Vec<Expr>, Meta),
     Symbol(String, Meta),
     Number(f64, Meta),
     List(Vec<Expr>, Meta),
@@ -19,7 +18,6 @@ pub enum Expr {
 impl Expr {
     fn meta(&self) -> Meta {
         match self {
-            Expr::Call(_, _, m) => m,
             Expr::Symbol(_, m) => m,
             Expr::Number(_, m) => m,
             Expr::List(_, m) => m,
@@ -31,7 +29,6 @@ impl Expr {
 
     fn span(&self) -> Span {
         match self {
-            Expr::Call(_, _, m) => m,
             Expr::Symbol(_, m) => m,
             Expr::Number(_, m) => m,
             Expr::List(_, m) => m,
@@ -42,11 +39,54 @@ impl Expr {
         .clone()
     }
 
+    pub fn number(self) -> f64 {
+        match self {
+            Expr::Number(n, _) => n,
+            _ => unreachable!(),
+        }
+    }
+
     fn from_token(token: &Token) -> Result<Self, ()> {
         match token {
             Token::Number(val, span) => Ok(Expr::Number(*val, Meta { span: span.clone() })),
             Token::Symbol(val, span) => Ok(Expr::Symbol(val.clone(), Meta { span: span.clone() })),
             _ => Err(()),
+        }
+    }
+
+    /// Returns `true` if the expr is [`Symbol`].
+    ///
+    /// [`Symbol`]: Expr::Symbol
+    pub fn is_symbol(&self) -> bool {
+        matches!(self, Self::Symbol(..))
+    }
+
+    /// Returns `true` if the expr is [`List`].
+    ///
+    /// [`List`]: Expr::List
+    pub fn is_list(&self) -> bool {
+        matches!(self, Self::List(..))
+    }
+
+    /// Returns inner list of expressions
+    /// Panics if `self` is not [`List`].
+    ///
+    /// [`List`]: Expr::List
+    pub fn as_list(self) -> Vec<Expr> {
+        match self {
+            Expr::List(v, _) => v,
+            _ => panic!("Called `as_list` on non-List instance of Expr"),
+        }
+    }
+
+    /// Returns inner sumbol
+    /// Panics if `self` is not [`Symbol`].
+    ///
+    /// [`Symbol`]: Expr::Symbol
+    pub fn as_symbol(self) -> String {
+        match self {
+            Expr::Symbol(v, _) => v,
+            _ => panic!("Called `as_symbol` on non-Symbol instance of Expr"),
         }
     }
 }
@@ -81,7 +121,7 @@ impl Parser {
         exprs.okay()
     }
 
-    fn parse_expr(&mut self) -> Result<Expr> {
+    pub fn parse_expr(&mut self) -> Result<Expr> {
         match self.lexer.next_token() {
             Ok(token @ Token::LParen(_)) => {
                 self.previous_tokens.push(token);
@@ -148,6 +188,7 @@ impl Parser {
                     .error(),
                 }
             }
+            Ok(Token::Eof(..)) => CranelispError::EOF.error(),
             Err(e) => e.error(),
         }
     }
@@ -157,21 +198,23 @@ impl Parser {
         let first_token = self.previous_tokens.last().unwrap().clone();
         let mut exprs = Vec::new();
         loop {
-            if let Ok(paren) = self.lexer.peek_token() {
-                if matches!(paren, Token::RParen(..)) {
+            match self.lexer.peek_token()? {
+                Token::RParen(..) => {
                     self.previous_tokens.push(self.lexer.next_token()?);
                     break;
                 }
-            } else {
-                let last = self.previous_tokens.last().unwrap();
-                return CranelispError::Syntax(SyntaxError::UnmatchedParen(
-                    first_token.span(),
-                    last.span(),
-                ))
-                .error();
+                token @ Token::Eof(..) => {
+                    return CranelispError::Syntax(SyntaxError::UnmatchedParen(
+                        first_token.span(),
+                        token.span(),
+                    ))
+                    .error();
+                }
+                _ => {
+                    let expr = self.parse_expr()?;
+                    exprs.push(expr);
+                }
             };
-            let expr = self.parse_expr()?;
-            exprs.push(expr);
         }
         // Safety: we have just pushed to previous_tokens
         let last_token = self.previous_tokens.last().unwrap();

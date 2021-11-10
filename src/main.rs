@@ -1,14 +1,28 @@
 use std::{
+    collections::HashMap,
     fmt::{Debug, Display},
     io::Cursor,
     ops::Range,
+    slice::SliceIndex,
 };
 mod eval;
 mod lexer;
 mod parser;
 
-use crate::parser::Parser;
+use eval::Value;
+use rustyline::{
+    validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
+    Config, EditMode,
+};
+use rustyline::{Editor, Result as RLResult};
+use rustyline_derive::{Completer, Helper, Highlighter, Hinter};
 
+use crate::{
+    eval::{FnBody, Signature, Type},
+    parser::Parser,
+};
+
+type Env = HashMap<String, Value>;
 type Result<T, E = CranelispError> = std::result::Result<T, E>;
 type Span = Range<usize>;
 #[derive(Debug, thiserror::Error)]
@@ -25,6 +39,8 @@ pub enum CranelispError {
     EOF,
     #[error("Unexpected EOF: expected {1}")]
     UnexpectedEOF(Span, String),
+    #[error("Couldn't get input: {0}")]
+    ReplIO(#[from] rustyline::error::ReadlineError),
 }
 
 #[derive(Debug)]
@@ -73,18 +89,78 @@ macro_rules! if_ {
     };
 }
 
+#[derive(Completer, Helper, Highlighter, Hinter)]
+struct InputValidator {
+    brackets: MatchingBracketValidator,
+}
+
+impl Validator for InputValidator {
+    fn validate(&self, ctx: &mut ValidationContext) -> RLResult<ValidationResult> {
+        self.brackets.validate(ctx)
+    }
+}
+
 fn main() -> Result<()> {
     let env = env_logger::Env::default()
-        .filter_or("CL_LOG_LEVEL", "trace")
+        .filter_or("CL_LOG_LEVEL", "cranelisp=trace")
         .write_style_or("CL_LOG_STYLE", "always");
     env_logger::init_from_env(env);
-    const PROG: &str = ":";
-    let parser = Parser::new(Cursor::new(PROG))?;
-    let tree = parser.parse();
-    if let Err(e) = tree {
-        provide_diagnostic(e, PROG)
-    } else {
-        println!("{:#?}", tree.unwrap());
+
+    let h = InputValidator {
+        brackets: MatchingBracketValidator::new(),
+    };
+    let config = Config::builder()
+        .history_ignore_dups(true)
+        .auto_add_history(true)
+        .edit_mode(EditMode::Emacs)
+        .build();
+    let mut rl = Editor::with_config(config);
+    rl.set_helper(Some(h));
+    type EnvLit<const N: usize> = [(String, Value); N];
+    let env_lit: EnvLit<2> = [
+        (
+            "+".to_string(),
+            Value::func(
+                Signature::build()
+                    .set_ret(Type::Number)
+                    .push_arg(("a".into(), Type::Number))
+                    .push_arg(("b".into(), Type::Number))
+                    .finish(),
+                FnBody::Native(|e| e.get("a").and_then(|a| e.get("b").map(|b| a + b)).unwrap()),
+            ),
+        ),
+        (
+            "-".to_string(),
+            Value::func(
+                Signature::build()
+                    .set_ret(Type::Number)
+                    .push_arg(("a".into(), Type::Number))
+                    .push_arg(("b".into(), Type::Number))
+                    .finish(),
+                FnBody::Native(|e| e.get("a").and_then(|a| e.get("b").map(|b| a - b)).unwrap()),
+            ),
+        ),
+    ];
+    let mut env: Env = env_lit.into_iter().collect();
+
+    loop {
+        // (:(a b) (+ a b) 1 2)
+        let env = env.clone();
+        let prog = rl.readline("> ")?;
+        if let "q\n" = &*prog {
+            break;
+        }
+        let tree = {
+            let mut parser = Parser::new(Cursor::new(&prog))?;
+            parser.parse_expr()
+        };
+        match tree {
+            Err(e) => provide_diagnostic(e, &prog),
+            Ok(e) => {
+                //println!("{:#?}", &e);
+                println!("{:#?}", eval::eval(e, env));
+            }
+        }
     }
     Ok(())
 }
@@ -106,6 +182,7 @@ fn provide_diagnostic(error: CranelispError, program: &str) {
         CranelispError::IO(_) => todo!(),
         CranelispError::EOF => todo!(),
         CranelispError::UnexpectedEOF(_, _) => todo!(),
+        CranelispError::ReplIO(_) => todo!(),
     }
 }
 
@@ -147,6 +224,12 @@ mod test {
     #[test]
     fn number_in_list() {
         let prog = Cursor::new("(1.1 2 .3 4.)");
+        let mut lexer = Lexer::new(prog).unwrap();
+        let expected = ["Ok(()", "Ok(1.1)", "Ok(2.0)", "Ok(0.3)", "Ok(4.0)", "Ok())"];
+        for expected in expected {
+            assert_eq!(format!("{:?}", lexer.next_token()), expected)
+        }
+        let prog = Cursor::new("(1.1 2 .3 4. )");
         let mut lexer = Lexer::new(prog).unwrap();
         let expected = ["Ok(()", "Ok(1.1)", "Ok(2.0)", "Ok(0.3)", "Ok(4.0)", "Ok())"];
         for expected in expected {

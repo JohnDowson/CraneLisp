@@ -1,6 +1,7 @@
 use crate::CranelispError;
 use crate::Result;
 use crate::SyntaxError;
+use log::trace;
 use somok::Somok;
 use std::{fmt::Debug, io::Read};
 mod token;
@@ -26,6 +27,15 @@ impl Lexer {
         .okay()
     }
 
+    fn consume_negative_number(&mut self) -> Result<Token> {
+        let start = self.next;
+        self.consume();
+        match self.consume_number()? {
+            Token::Number(n, span) => Token::Number(-n, start..span.end).okay(),
+            _ => unreachable!(),
+        }
+    }
+
     fn consume_number(&mut self) -> Result<Token> {
         let start = self.next;
         let mut number = String::new();
@@ -35,6 +45,7 @@ impl Lexer {
                 number.push('.');
                 number.push_str(&self.consume_until(|c| !c.is_numeric()));
             }
+            // TODO: support negative literals
             Some(c) if c.is_numeric() => {
                 let integer = self.consume_until(|c| !c.is_numeric());
                 let mut decimal = String::new();
@@ -42,7 +53,7 @@ impl Lexer {
                     Some('.') => {
                         self.consume();
                         if let Some(c) = self.peek() {
-                            if !c.is_numeric() && c != &')' {
+                            if !c.is_numeric() && c != &')' && !c.is_whitespace() {
                                 return CranelispError::Syntax(SyntaxError::InvalidLiteral(
                                     start..self.next,
                                     format!(" {:?}", c),
@@ -52,8 +63,9 @@ impl Lexer {
                         }
                         decimal = self.consume_until(|c| !c.is_numeric());
                     }
-                    Some(c) if c.is_whitespace() => {}
+                    Some(c) if c.is_whitespace() || c == &')' => {}
                     Some(c) => {
+                        eprintln!("invalid literal{:?}", c.is_whitespace());
                         return CranelispError::Syntax(SyntaxError::InvalidLiteral(
                             start..self.next,
                             format!(" {:?}", c),
@@ -132,7 +144,10 @@ impl Lexer {
                     Token::RParen(self.next - 1).okay()
                 }
                 c if c.is_numeric() || c == &'.' => self.consume_number(),
-                c if c.is_alphanumeric() => self.consume_symbol(),
+                '-' if matches!(self.peekn(1), Some(c) if c.is_numeric()) => {
+                    self.consume_negative_number()
+                }
+                c if !c.is_numeric() && !c.is_whitespace() => self.consume_symbol(),
                 '#' => {
                     //trace!("Consuming Comment at location {}", self.next);
                     self.consume();
@@ -154,12 +169,16 @@ impl Lexer {
                 .error(),
             }
         } else {
-            CranelispError::EOF.error()
+            Token::Eof(self.next).okay()
         }
     }
 
     fn peek(&self) -> Option<&char> {
-        self.src.get(self.next)
+        self.peekn(0)
+    }
+
+    fn peekn(&self, n: usize) -> Option<&char> {
+        self.src.get(self.next + n)
     }
 
     fn consume_until(&mut self, del: impl Fn(char) -> bool) -> String {
