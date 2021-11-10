@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::ops::Range;
 
 use crate::lexer::{Lexer, Token};
@@ -102,7 +101,7 @@ pub struct Parser {
 }
 
 impl Parser {
-    pub fn new(src: impl Read) -> Result<Self> {
+    pub fn new(src: String) -> Result<Self> {
         Self {
             lexer: Lexer::new(src)?,
             previous_tokens: Vec::new(),

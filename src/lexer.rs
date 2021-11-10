@@ -2,7 +2,7 @@ use crate::CranelispError;
 use crate::Result;
 use crate::SyntaxError;
 use somok::Somok;
-use std::{fmt::Debug, io::Read};
+use std::fmt::Debug;
 mod token;
 pub use token::Token;
 
@@ -14,9 +14,7 @@ pub struct Lexer {
 }
 
 impl Lexer {
-    pub fn new<R: Read>(mut reader: R) -> Result<Self> {
-        let mut _src = String::new();
-        reader.read_to_string(&mut _src)?;
+    pub fn new(_src: String) -> Result<Self> {
         let _src = Box::leak(_src.into_boxed_str());
         Self {
             src: _src.chars().collect(),
@@ -198,6 +196,18 @@ impl Lexer {
             return;
         }
         self.next += 1
+    }
+
+    pub fn collect(mut self) -> Vec<Token> {
+        let mut tt = Vec::new();
+        while let Ok(t) = self.next_token() {
+            if matches!(t, Token::Eof(..)) {
+                tt.push(t);
+                break;
+            }
+            tt.push(t);
+        }
+        tt
     }
 }
 
