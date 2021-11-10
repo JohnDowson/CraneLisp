@@ -162,7 +162,7 @@ impl Parser {
                 let meta = expr.meta();
                 Expr::Quoted(Box::new(expr), meta).okay()
             }
-            Ok(Token::String(..)) => todo!(),
+            Ok(Token::String(..)) => todo!("String exprs are unimplemented"),
 
             Ok(token @ Token::Defun(..)) => {
                 let args = self.parse_expr()?;

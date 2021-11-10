@@ -45,7 +45,6 @@ impl Lexer {
                 number.push('.');
                 number.push_str(&self.consume_until(|c| !c.is_numeric()));
             }
-            // TODO: support negative literals
             Some(c) if c.is_numeric() => {
                 let integer = self.consume_until(|c| !c.is_numeric());
                 let mut decimal = String::new();
@@ -126,6 +125,7 @@ impl Lexer {
                 }
                 ':' => {
                     self.consume();
+                    // TODO: Add type annotations for defuns
                     Token::Defun(self.next - 1).okay()
                 }
                 '"' => {

@@ -3,8 +3,6 @@ use std::{
     ops::{Add, Sub},
 };
 
-use log::trace;
-
 use crate::{parser::Expr, Env};
 
 #[derive(Clone)]
@@ -23,6 +21,21 @@ impl Function {
         }
 
         self.body.call(env)
+    }
+}
+
+impl Debug for Function {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.body {
+            FnBody::Native(_) => writeln!(f, "Native function")?,
+            FnBody::Virtual(e) => writeln!(f, "Virtual function \n{:?}", e.clone().as_list())?,
+        };
+        writeln!(
+            f,
+            "{:?} => {:?}",
+            self.sig.args.iter().map(|(_, t)| t).collect::<Vec<_>>(),
+            self.sig.ret
+        )
     }
 }
 
@@ -81,7 +94,7 @@ impl Signature {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Type {
     Number,
 }
@@ -136,7 +149,7 @@ impl Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Number(inner) => write!(f, "{:?}", inner),
-            Value::Func(_) => write!(f, "Function"),
+            Value::Func(fun) => write!(f, "{:?}", fun),
             Value::None => write!(f, "None"),
         }
     }
@@ -168,7 +181,7 @@ pub fn eval(expr: Expr, mut env: Env) -> Value {
                 .reduce(|acc, v| fun.clone().unwrap_fn().call(&[acc, v], env.clone()))
                 .unwrap()
         }
-        Expr::Quoted(_, _) => todo!(),
+        Expr::Quoted(_, _) => todo!("Deal vith evaluating things that shouldn't be evaluated"),
         Expr::Defun(args, body, _) => {
             let sig = {
                 let mut builder = Signature::build().set_ret(Type::Number);

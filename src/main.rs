@@ -157,7 +157,7 @@ fn main() -> Result<()> {
         match tree {
             Err(e) => provide_diagnostic(e, &prog),
             Ok(e) => {
-                //println!("{:#?}", &e);
+                println!("{:#?}", &e);
                 println!("{:#?}", eval::eval(e, env));
             }
         }
@@ -179,10 +179,7 @@ fn provide_diagnostic(error: CranelispError, program: &str) {
 
             report.finish().eprint(Source::from(program)).unwrap();
         }
-        CranelispError::IO(_) => todo!(),
-        CranelispError::EOF => todo!(),
-        CranelispError::UnexpectedEOF(_, _) => todo!(),
-        CranelispError::ReplIO(_) => todo!(),
+        _ => todo!("Handle other error kinds"),
     }
 }
 
