@@ -3,7 +3,12 @@ use std::{
     ops::{Add, Sub},
 };
 
-use crate::{parser::Expr, Env};
+use somok::Somok;
+
+use crate::{
+    parser::{Arglist, Expr},
+    Env,
+};
 
 #[derive(Clone)]
 pub struct Function {
@@ -90,6 +95,10 @@ impl Signature {
         }
     }
 
+    pub fn build_from_arglist(args: Arglist) -> SignatureBuilder {
+        SignatureBuilder { args, ret: None }
+    }
+
     pub fn arity(&self) -> usize {
         self.args.len()
     }
@@ -100,10 +109,20 @@ pub enum Type {
     Number,
 }
 
+impl Type {
+    pub fn from_str(str: &str) -> Option<Self> {
+        match str {
+            "Num" => Self::Number.some(),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum Value {
     Number(f64),
     Func(Function),
+    Return(Box<Value>),
     None,
 }
 
@@ -119,8 +138,41 @@ impl Value {
         match self {
             Value::Number(_) => panic!("Called 'unwrap_fn' on a value of type Number"),
             Value::None => panic!("Called 'unwrap_fn' on a value of type None"),
+            Value::Return(..) => panic!("Called 'unwrap_fn' on a value of type Return"),
             Value::Func(f) => f,
         }
+    }
+
+    /// Returns `true` if the value is [`Func`].
+    ///
+    /// [`Func`]: Value::Func
+    pub fn is_func(&self) -> bool {
+        matches!(self, Self::Func(..))
+    }
+
+    /// Returns `true` if the value is [`Return`].
+    ///
+    /// [`Return`]: Value::Return
+    pub fn is_return(&self) -> bool {
+        matches!(self, Self::Return(..))
+    }
+
+    pub fn is_valued_return(&self) -> bool {
+        matches!(self, Value::Return(v) if !v.is_none())
+    }
+
+    pub fn return_inner(self) -> Value {
+        match self {
+            Value::Return(v) => *v,
+            _ => panic!("Tried to unwrap return on non-return value"),
+        }
+    }
+
+    /// Returns `true` if the value is [`None`].
+    ///
+    /// [`None`]: Value::None
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
     }
 }
 
@@ -131,6 +183,24 @@ impl Add for &Value {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Value::Number(a + b),
             _ => panic!("Type mismatch"),
+        }
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Number(l0), Self::Number(r0)) => l0 == r0,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Number(l0), Self::Number(r0)) => l0.partial_cmp(r0),
+            _ => None,
         }
     }
 }
@@ -152,6 +222,7 @@ impl Debug for Value {
             Value::Number(inner) => write!(f, "{:?}", inner),
             Value::Func(fun) => write!(f, "{:?}", fun),
             Value::None => write!(f, "None"),
+            Value::Return(v) => write!(f, "Return({:?})", v),
         }
     }
 }
@@ -161,21 +232,25 @@ pub fn eval(expr: Expr, env: Env) -> Value {
         Expr::Symbol(s, _) => env.get(&s).unwrap().clone(),
         Expr::Number(val, _) => Value::Number(val),
         Expr::List(mut list, _) => {
-            let defun;
+            let value_store;
             let fun = match list.remove(0) {
                 Expr::Symbol(s, _) => env.get(&s).unwrap(),
-                Expr::Defun(args, body, _) => {
-                    let sig = {
-                        let mut builder = Signature::build().set_ret(Type::Number);
-                        for arg in args.unwrap_list() {
-                            builder = builder.push_arg((arg.unwrap_symbol(), Type::Number));
-                        }
-                        builder.finish()
-                    };
-                    defun = Value::func(sig, FnBody::Virtual(*body));
-                    &defun
+                Expr::Defun(args, body, ret, _) => {
+                    let sig = { Signature::build_from_arglist(args).set_ret(ret).finish() };
+                    value_store = Value::func(sig, FnBody::Virtual(*body));
+                    &value_store
                 }
-                _ => panic!(),
+                Expr::If(cond, truth, lie, _) => {
+                    let cond = eval(*cond, env.clone());
+                    value_store = if cond > Value::Number(0.0) {
+                        eval(*truth, env.clone())
+                    } else {
+                        eval(*lie, env.clone())
+                    };
+                    return value_store;
+                }
+                expr @ Expr::Return(..) => return eval(expr, env),
+                _ => todo!("Error: unquoted list that isn't application"),
             };
             list.into_iter()
                 .map(|e| eval(e, env.clone()))
@@ -183,15 +258,30 @@ pub fn eval(expr: Expr, env: Env) -> Value {
                 .unwrap()
         }
         Expr::Quoted(_, _) => todo!("Deal vith evaluating things that shouldn't be evaluated"),
-        Expr::Defun(args, body, _) => {
-            let sig = {
-                let mut builder = Signature::build().set_ret(Type::Number);
-                for arg in args.unwrap_list() {
-                    builder = builder.push_arg((arg.unwrap_symbol(), Type::Number));
-                }
-                builder.finish()
-            };
+        Expr::Defun(args, body, ret, _) => {
+            let sig = Signature::build_from_arglist(args).set_ret(ret).finish();
             Value::func(sig, FnBody::Virtual(*body))
+        }
+        Expr::If(..) => todo!("Evaluate if"),
+        Expr::Return(expr, ..) => {
+            if let Some(expr) = expr {
+                Value::Return(Box::new(eval(*expr, env)))
+            } else {
+                Value::Return(Box::new(Value::None))
+            }
+        }
+        Expr::Loop(body, ..) => {
+            let mut previous_value = Value::None;
+            loop {
+                let value = eval(*body.clone(), env.clone());
+                if value.is_return() {
+                    if value.is_valued_return() {
+                        return value.return_inner();
+                    }
+                    return previous_value;
+                }
+                previous_value = value;
+            }
         }
     }
 }

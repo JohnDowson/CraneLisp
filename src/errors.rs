@@ -25,9 +25,13 @@ pub enum SyntaxError {
     UnmatchedParen(Span, Span),
     UnexpectedCharacter(Span, char),
     InvalidLiteral(Span, String),
+
     FunctionHasNoBody(Span, Span),
     FunctionHasNoArglist(Span, Span),
     InvalidDefun(Span, Span, Span),
+
+    MissingType(Span),
+    UnknownType(Span, String),
 }
 impl SyntaxError {
     pub fn spans(&self) -> Vec<Span> {
@@ -35,9 +39,13 @@ impl SyntaxError {
             SyntaxError::UnmatchedParen(a, b, ..) => vec![a.clone(), b.clone()],
             SyntaxError::UnexpectedCharacter(a, ..) => vec![a.clone()],
             SyntaxError::InvalidLiteral(a, ..) => vec![a.clone()],
+
             SyntaxError::FunctionHasNoBody(a, b) => vec![a.clone(), b.clone()],
             SyntaxError::FunctionHasNoArglist(a, b) => vec![a.clone(), b.clone()],
             SyntaxError::InvalidDefun(a, b, c) => vec![a.clone(), b.clone(), c.clone()],
+
+            SyntaxError::MissingType(b) => vec![b.clone()],
+            SyntaxError::UnknownType(a, ..) => vec![a.clone()],
         }
     }
 }
@@ -47,9 +55,13 @@ impl Display for SyntaxError {
             SyntaxError::UnmatchedParen(_, _) => "Unmatched paren".into(),
             SyntaxError::UnexpectedCharacter(_, c) => format!("Unexpected character {}", c),
             SyntaxError::InvalidLiteral(_, s) => format!("Invalid numeric literal {}", s),
+
             SyntaxError::FunctionHasNoBody(_, _) => "Functions must have body".to_string(),
             SyntaxError::FunctionHasNoArglist(_, _) => "Functions must have arglist".to_string(),
             SyntaxError::InvalidDefun(..) => "Functions must have arglist and body".to_string(),
+
+            SyntaxError::MissingType(..) => "Expected type".to_string(),
+            SyntaxError::UnknownType(_, s) => format!("Unknown type {}", s),
         };
         write!(f, "{}", msg)
     }

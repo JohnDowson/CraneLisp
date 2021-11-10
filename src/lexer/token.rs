@@ -1,4 +1,4 @@
-use crate::Span;
+use crate::{eval::Type, Span};
 use std::fmt::Debug;
 #[derive(Clone)]
 pub enum Token {
@@ -10,6 +10,10 @@ pub enum Token {
     Quote(usize),
     Defun(usize),
     Eof(usize),
+    Type(Type, Span),
+    Loop(Span),
+    If(Span),
+    Return(Span),
 }
 
 impl Token {
@@ -26,6 +30,10 @@ impl Token {
             Token::Quote(s) => *s,
             Token::Defun(s) => *s,
             Token::Eof(s) => *s,
+            Token::Type(_, s) => s.start,
+            Token::Loop(s) => s.start,
+            Token::If(s) => s.start,
+            Token::Return(s) => s.start,
         }
     }
     pub fn span_end(&self) -> usize {
@@ -38,6 +46,24 @@ impl Token {
             Token::Quote(s) => *s,
             Token::Defun(s) => *s,
             Token::Eof(s) => *s,
+            Token::Type(_, s) => s.end,
+            Token::Loop(s) => s.end,
+            Token::If(s) => s.end,
+            Token::Return(s) => s.end,
+        }
+    }
+
+    pub fn is_valued(&self) -> bool {
+        match self {
+            Token::LParen(_) => true,
+            Token::Number(_, _) => true,
+            Token::Symbol(_, _) => true,
+            Token::String(_, _) => true,
+            Token::Loop(_) => true,
+            Token::If(_) => true,
+            Token::Return(_) => todo!("I think this is none?"),
+            Token::Quote(_) => todo!("Is this valued? Dunno"),
+            _ => false,
         }
     }
 }
@@ -51,8 +77,12 @@ impl Debug for Token {
             Token::Symbol(s, _) => write!(fmt, "{}", s,),
             Token::String(s, _) => write!(fmt, "{:?}", s,),
             Token::Quote(_) => write!(fmt, "'"),
-            Token::Defun(_) => write!(fmt, ":"),
+            Token::Defun(_) => write!(fmt, ">"),
             Token::Eof(_) => write!(fmt, "EOF"),
+            Token::Type(ty, _) => write!(fmt, ":{:?}", ty),
+            Token::Loop(_) => write!(fmt, "loop"),
+            Token::If(_) => write!(fmt, "?"),
+            Token::Return(_) => write!(fmt, "return"),
         }
     }
 }

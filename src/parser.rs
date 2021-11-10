@@ -1,9 +1,12 @@
 use std::ops::Range;
 
+use crate::eval::Type;
 use crate::lexer::{Lexer, Token};
 use crate::{CranelispError, Result, Span, SyntaxError};
 use log::trace;
 use somok::Somok;
+
+pub type Arglist = Vec<(String, Type)>;
 
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -11,7 +14,10 @@ pub enum Expr {
     Number(f64, Meta),
     List(Vec<Expr>, Meta),
     Quoted(Box<Expr>, Meta),
-    Defun(Box<Expr>, Box<Expr>, Meta),
+    Defun(Arglist, Box<Expr>, Type, Meta),
+    If(Box<Expr>, Box<Expr>, Box<Expr>, Meta),
+    Return(Option<Box<Expr>>, Meta),
+    Loop(Box<Expr>, Meta),
 }
 
 impl Expr {
@@ -21,7 +27,10 @@ impl Expr {
             Expr::Number(_, m) => m,
             Expr::List(_, m) => m,
             Expr::Quoted(_, m) => m,
-            Expr::Defun(_, _, m) => m,
+            Expr::Defun(_, _, _, m) => m,
+            Expr::If(_, _, _, m) => m,
+            Expr::Return(_, m) => m,
+            Expr::Loop(_, m) => m,
         }
         .clone()
     }
@@ -32,7 +41,10 @@ impl Expr {
             Expr::Number(_, m) => m,
             Expr::List(_, m) => m,
             Expr::Quoted(_, m) => m,
-            Expr::Defun(_, _, m) => m,
+            Expr::Defun(_, _, _, m) => m,
+            Expr::If(_, _, _, m) => m,
+            Expr::Return(_, m) => m,
+            Expr::Loop(_, m) => m,
         }
         .span
         .clone()
@@ -123,13 +135,11 @@ impl Parser {
 
             Ok(token @ Token::Number(..)) => {
                 let expr = Expr::from_token(&token).unwrap();
-                self.previous_tokens.push(token);
                 expr.okay()
             }
 
             Ok(token @ Token::Symbol(..)) => {
                 let expr = Expr::from_token(&token).unwrap();
-                self.previous_tokens.push(token);
                 expr.okay()
             }
 
@@ -153,30 +163,127 @@ impl Parser {
             Ok(Token::String(..)) => todo!("String exprs are unimplemented"),
 
             Ok(token @ Token::Defun(..)) => {
-                let args = self.parse_expr()?;
+                let ret = self.eat_type()?;
+                let args = self.eat_arglist()?;
                 let body = self.parse_expr()?;
-                match (args, body) {
-                    (args @ Expr::List(..), body @ Expr::List(..)) => {
+                match body {
+                    body @ Expr::List(..) => {
                         let span = token.span_start()..body.span().end;
-                        Expr::Defun(Box::new(args), Box::new(body), Meta { span }).okay()
+                        Expr::Defun(args, Box::new(body), ret, Meta { span }).okay()
                     }
-                    (Expr::List(..), body) => CranelispError::Syntax(
-                        SyntaxError::FunctionHasNoBody(token.span(), body.span()),
-                    )
-                    .error(),
-                    (args, Expr::List(..)) => CranelispError::Syntax(
-                        SyntaxError::FunctionHasNoArglist(token.span(), args.span()),
-                    )
-                    .error(),
-                    (args, body) => CranelispError::Syntax(SyntaxError::InvalidDefun(
+                    body => CranelispError::Syntax(SyntaxError::FunctionHasNoBody(
                         token.span(),
-                        args.span(),
                         body.span(),
                     ))
                     .error(),
+                    // => CranelispError::Syntax(
+                    //    SyntaxError::FunctionHasNoArglist(token.span(), args.span()),
                 }
             }
+            Ok(_token @ Token::Type(..)) => {
+                todo!("Error for type where no type expected")
+            }
+            Ok(token @ Token::Loop(..)) => match self.parse_expr()? {
+                body @ Expr::List(..) => {
+                    let span = token.span();
+                    Expr::Loop(Box::new(body), Meta { span })
+                }
+                .okay(),
+                _ => todo!(),
+            },
+            Ok(token @ Token::If(..)) => {
+                match (self.parse_expr()?, self.parse_expr()?, self.parse_expr()?) {
+                    (
+                        cond @ (Expr::List(..) | Expr::Number(..) | Expr::Symbol(..)),
+                        truth
+                        @
+                        (Expr::List(..)
+                        | Expr::Number(..)
+                        | Expr::Symbol(..)
+                        | Expr::Return(..)),
+                        lie
+                        @
+                        (Expr::List(..)
+                        | Expr::Number(..)
+                        | Expr::Symbol(..)
+                        | Expr::Return(..)),
+                    ) => {
+                        let span = token.span_start()..lie.span().end;
+                        Expr::If(
+                            Box::new(cond),
+                            Box::new(truth),
+                            Box::new(lie),
+                            Meta { span },
+                        )
+                    }
+                    .okay(),
+                    _ => todo!(),
+                }
+            }
+            Ok(token @ Token::Return(..)) => {
+                let mut value = None;
+                if self.lexer.peek_token()?.is_valued() {
+                    value = Box::new(self.parse_expr()?).some()
+                }
+                Expr::Return(value, Meta { span: token.span() }).okay()
+            }
+
             Ok(Token::Eof(..)) => CranelispError::EOF.error(),
+            Err(e) => e.error(),
+        }
+    }
+
+    fn _eat_lparen(&mut self) -> Result<Token> {
+        match self.lexer.next_token() {
+            token @ Ok(Token::LParen(..)) => token,
+            Ok(token) => {
+                // TODO this should be unexpected token
+                CranelispError::Syntax(SyntaxError::MissingType(token.span())).error()?
+            }
+            Err(_) => todo!(),
+        }
+    }
+
+    fn eat_arglist(&mut self) -> Result<Arglist> {
+        let mut arglist: Arglist = Vec::new();
+        let _lparen = match self.lexer.next_token() {
+            Ok(token @ Token::LParen(..)) => token,
+            Ok(token) => CranelispError::Syntax(SyntaxError::MissingType(token.span())).error()?,
+            Err(_) => todo!(),
+        };
+        loop {
+            let symbol = match self.lexer.next_token() {
+                Ok(_token @ Token::RParen(..)) => return arglist.okay(),
+                Ok(Token::Symbol(s, ..)) => s,
+                Ok(token) => {
+                    // TODO: General "UnexpectedToken" error
+                    return CranelispError::Syntax(SyntaxError::MissingType(token.span())).error();
+                }
+                Err(_) => todo!(),
+            };
+
+            let ty = match self.lexer.next_token() {
+                Ok(Token::Type(t, ..)) => t,
+                Ok(token) => {
+                    // TODO: General "UnexpectedToken" error
+                    CranelispError::Syntax(SyntaxError::MissingType(token.span())).error()?
+                }
+                Err(_) => todo!(),
+            };
+
+            arglist.push((symbol, ty));
+        }
+    }
+
+    fn eat_type(&mut self) -> Result<Type> {
+        match self.lexer.next_token() {
+            Ok(Token::Type(ty, ..)) => ty.okay(),
+            Ok(tok @ Token::Eof(..)) => CranelispError::UnexpectedEOF(
+                tok.span(),
+                "Unexpected EOF when expecting Type".into(),
+            )
+            .error(),
+            Ok(tok) => CranelispError::Syntax(SyntaxError::MissingType(tok.span())).error(),
             Err(e) => e.error(),
         }
     }

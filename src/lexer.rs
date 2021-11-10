@@ -1,3 +1,4 @@
+use crate::eval::Type;
 use crate::CranelispError;
 use crate::Result;
 use crate::SyntaxError;
@@ -110,6 +111,26 @@ impl Lexer {
         token
     }
 
+    fn is_loop(&self) -> bool {
+        matches!(
+            (self.peekn(1), self.peekn(2), self.peekn(3)),
+            (Some('o'), Some('o'), Some('p'))
+        )
+    }
+
+    fn is_return(&self) -> bool {
+        matches!(
+            (
+                self.peekn(1),
+                self.peekn(2),
+                self.peekn(3),
+                self.peekn(4),
+                self.peekn(5)
+            ),
+            (Some('e'), Some('t'), Some('u'), Some('r'), Some('n'))
+        )
+    }
+
     pub fn next_token(&mut self) -> Result<Token> {
         if let Some(char) = self.peek() {
             // trace!("{:?}", &*self);
@@ -120,9 +141,48 @@ impl Lexer {
                     self.consume();
                     self.next_token()
                 }
-                ':' => {
+                'l' if self.is_loop() => {
+                    for _ in 0..4 {
+                        self.consume()
+                    }
+                    Token::Loop(self.next - 4..self.next - 1).okay()
+                }
+                'l' if self.is_loop() => {
+                    for _ in 0..4 {
+                        self.consume()
+                    }
+                    Token::Loop(self.next - 4..self.next - 1).okay()
+                }
+                'i' if matches!(self.peekn(1), Some('f')) => {
                     self.consume();
-                    // TODO: Add type annotations for defuns
+                    self.consume();
+                    Token::If(self.next - 2..self.next - 1).okay()
+                }
+                '?' => {
+                    self.consume();
+                    Token::If(self.next - 1..self.next - 1).okay()
+                }
+                'r' if self.is_return() => {
+                    for _ in 0..6 {
+                        self.consume()
+                    }
+                    Token::Return(self.next - 6..self.next - 1).okay()
+                }
+                ':' => {
+                    let start = self.next;
+                    self.consume();
+                    let symbol =
+                        self.consume_until(|c| c.is_whitespace() || ['(', ')'].contains(&c));
+                    let end = self.next;
+                    Type::from_str(&symbol)
+                        .ok_or(CranelispError::Syntax(SyntaxError::UnknownType(
+                            (start - 1)..end,
+                            symbol,
+                        )))
+                        .map(|ty| Token::Type(ty, start..end))
+                }
+                '>' => {
+                    self.consume();
                     Token::Defun(self.next - 1).okay()
                 }
                 '"' => {

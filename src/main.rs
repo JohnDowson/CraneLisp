@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, ops::Range};
+use std::{collections::HashMap, fmt::Debug, fs::File, io::Read, ops::Range};
 mod eval;
 mod lexer;
 mod parser;
@@ -22,6 +22,8 @@ struct Args {
     dump_ast: bool,
     #[clap(short = 'k', long)]
     dump_tokens: bool,
+    #[clap(short, long)]
+    exec: Option<Vec<String>>,
     source: Option<String>,
 }
 
@@ -32,7 +34,16 @@ fn main() -> Result<()> {
     env_logger::init_from_env(env);
 
     let args = Args::parse();
-    if let Some(source) = args.source {
+    if let Some(source) = args.exec {
+        let source = source.join(" ");
+        eval_source(source, args.time, args.dump_ast, args.dump_tokens)
+    } else if let Some(source) = args.source {
+        let mut prog = File::open(&source)?;
+        let source = {
+            let mut src = String::new();
+            prog.read_to_string(&mut src)?;
+            src
+        };
         eval_source(source, args.time, args.dump_ast, args.dump_tokens)
     } else {
         repl::repl(args.time, args.dump_ast, args.dump_tokens)
@@ -40,17 +51,15 @@ fn main() -> Result<()> {
 }
 
 fn provide_diagnostic(error: CranelispError, program: impl Into<ariadne::Source> + Debug) {
+    use ariadne::{Label, Report, ReportKind};
     match error {
         CranelispError::Syntax(s) => {
-            use ariadne::{Label, Report, ReportKind};
-
             let spans = s.spans().into_iter().zip(std::iter::repeat("Here"));
             let mut report = Report::build(ReportKind::Error, (), 0).with_message(s.to_string());
 
             for (span, msg) in spans {
                 report = report.with_label(Label::new(span).with_message(msg))
             }
-            dbg!(&program);
             report.finish().eprint(program.into()).unwrap();
         }
         CranelispError::IO(_) => todo!("IO"),

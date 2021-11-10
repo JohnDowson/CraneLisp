@@ -1,5 +1,3 @@
-use std::{fs::File, io::Read, path::Path};
-
 use rustyline::{
     validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
     Config, EditMode,
@@ -103,13 +101,7 @@ fn eval_env() -> Env {
     env_lit.into_iter().collect()
 }
 
-pub fn eval_source(src: impl AsRef<Path>, time: bool, ast: bool, tt: bool) -> Result<()> {
-    let mut prog = File::open(src.as_ref())?;
-    let src = {
-        let mut src = String::new();
-        prog.read_to_string(&mut src)?;
-        src
-    };
+pub fn eval_source(src: String, time: bool, ast: bool, tt: bool) -> Result<()> {
     let env = eval_env();
 
     if tt {
