@@ -72,7 +72,7 @@ impl Expr {
     /// Panics if `self` is not [`List`].
     ///
     /// [`List`]: Expr::List
-    pub fn as_list(self) -> Vec<Expr> {
+    pub fn unwrap_list(self) -> Vec<Expr> {
         match self {
             Expr::List(v, _) => v,
             _ => panic!("Called `as_list` on non-List instance of Expr"),
@@ -83,7 +83,7 @@ impl Expr {
     /// Panics if `self` is not [`Symbol`].
     ///
     /// [`Symbol`]: Expr::Symbol
-    pub fn as_symbol(self) -> String {
+    pub fn unwrap_symbol(self) -> String {
         match self {
             Expr::Symbol(v, _) => v,
             _ => panic!("Called `as_symbol` on non-Symbol instance of Expr"),
@@ -108,17 +108,6 @@ impl Parser {
             previous_tokens: Vec::new(),
         }
         .okay()
-    }
-    pub fn parse(mut self) -> Result<Vec<Expr>> {
-        let mut exprs = Vec::new();
-        loop {
-            match self.parse_expr() {
-                Ok(expr) => exprs.push(expr),
-                Err(CranelispError::EOF) => break,
-                Err(e) => return e.error(),
-            }
-        }
-        exprs.okay()
     }
 
     pub fn parse_expr(&mut self) -> Result<Expr> {

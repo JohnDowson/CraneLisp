@@ -3,7 +3,6 @@ use std::{
     fmt::{Debug, Display},
     io::Cursor,
     ops::Range,
-    slice::SliceIndex,
 };
 mod eval;
 mod lexer;
@@ -141,7 +140,7 @@ fn main() -> Result<()> {
             ),
         ),
     ];
-    let mut env: Env = env_lit.into_iter().collect();
+    let env: Env = env_lit.into_iter().collect();
 
     loop {
         // (:(a b) (+ a b) 1 2)

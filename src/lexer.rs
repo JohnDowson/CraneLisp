@@ -1,7 +1,6 @@
 use crate::CranelispError;
 use crate::Result;
 use crate::SyntaxError;
-use log::trace;
 use somok::Somok;
 use std::{fmt::Debug, io::Read};
 mod token;

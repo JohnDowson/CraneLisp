@@ -16,7 +16,8 @@ impl Function {
         self.sig.arity()
     }
     pub fn call(&self, args: &[Value], mut env: Env) -> Value {
-        for (i, (name, ty)) in self.sig.args.iter().enumerate() {
+        for (i, (name, _ty)) in self.sig.args.iter().enumerate() {
+            // TODO: check types
             env.insert(name.clone(), args[i].clone());
         }
 
@@ -28,7 +29,7 @@ impl Debug for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.body {
             FnBody::Native(_) => writeln!(f, "Native function")?,
-            FnBody::Virtual(e) => writeln!(f, "Virtual function \n{:?}", e.clone().as_list())?,
+            FnBody::Virtual(e) => writeln!(f, "Virtual function \n{:?}", e.clone().unwrap_list())?,
         };
         writeln!(
             f,
@@ -155,7 +156,7 @@ impl Debug for Value {
     }
 }
 
-pub fn eval(expr: Expr, mut env: Env) -> Value {
+pub fn eval(expr: Expr, env: Env) -> Value {
     match expr {
         Expr::Symbol(s, _) => env.get(&s).unwrap().clone(),
         Expr::Number(val, _) => Value::Number(val),
@@ -166,8 +167,8 @@ pub fn eval(expr: Expr, mut env: Env) -> Value {
                 Expr::Defun(args, body, _) => {
                     let sig = {
                         let mut builder = Signature::build().set_ret(Type::Number);
-                        for arg in args.as_list() {
-                            builder = builder.push_arg((arg.as_symbol(), Type::Number));
+                        for arg in args.unwrap_list() {
+                            builder = builder.push_arg((arg.unwrap_symbol(), Type::Number));
                         }
                         builder.finish()
                     };
@@ -185,8 +186,8 @@ pub fn eval(expr: Expr, mut env: Env) -> Value {
         Expr::Defun(args, body, _) => {
             let sig = {
                 let mut builder = Signature::build().set_ret(Type::Number);
-                for arg in args.as_list() {
-                    builder = builder.push_arg((arg.as_symbol(), Type::Number));
+                for arg in args.unwrap_list() {
+                    builder = builder.push_arg((arg.unwrap_symbol(), Type::Number));
                 }
                 builder.finish()
             };
