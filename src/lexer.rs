@@ -2,6 +2,7 @@ use crate::eval::Type;
 use crate::CranelispError;
 use crate::Result;
 use crate::SyntaxError;
+
 use somok::Somok;
 use std::fmt::Debug;
 mod token;
@@ -118,6 +119,10 @@ impl Lexer {
         )
     }
 
+    fn is_let(&self) -> bool {
+        matches!((self.peekn(1), self.peekn(2)), (Some('e'), Some('t')))
+    }
+
     fn is_return(&self) -> bool {
         matches!(
             (
@@ -147,11 +152,11 @@ impl Lexer {
                     }
                     Token::Loop(self.next - 4..self.next - 1).okay()
                 }
-                'l' if self.is_loop() => {
-                    for _ in 0..4 {
+                'l' if self.is_let() => {
+                    for _ in 0..3 {
                         self.consume()
                     }
-                    Token::Loop(self.next - 4..self.next - 1).okay()
+                    Token::Let(self.next - 3..self.next - 1).okay()
                 }
                 'i' if matches!(self.peekn(1), Some('f')) => {
                     self.consume();
@@ -181,7 +186,8 @@ impl Lexer {
                         )))
                         .map(|ty| Token::Type(ty, start..end))
                 }
-                '>' => {
+                '|' if matches!(self.peekn(1), Some('>')) => {
+                    self.consume();
                     self.consume();
                     Token::Defun(self.next - 1).okay()
                 }
@@ -204,7 +210,6 @@ impl Lexer {
                 '-' if matches!(self.peekn(1), Some(c) if c.is_numeric()) => {
                     self.consume_negative_number()
                 }
-                c if !c.is_numeric() && !c.is_whitespace() => self.consume_symbol(),
                 '#' => {
                     //trace!("Consuming Comment at location {}", self.next);
                     self.consume();
@@ -214,6 +219,8 @@ impl Lexer {
                     };
                     self.next_token()
                 }
+                c if !c.is_numeric() && !c.is_whitespace() => self.consume_symbol(),
+
                 '\'' => {
                     //trace!("Consuming Quote at location {}", self.next);
                     self.consume();

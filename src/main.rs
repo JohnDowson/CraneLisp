@@ -1,16 +1,21 @@
-use std::{collections::HashMap, fmt::Debug, fs::File, io::Read, ops::Range};
+use std::{fmt::Debug, fs::File, io::Read, ops::Range};
 mod eval;
 mod lexer;
 mod parser;
+
+#[allow(dead_code, unused_imports)]
+mod jit;
 
 use clap::Parser;
 use eval::Value;
 mod errors;
 pub use errors::*;
+use fnv::FnvHashMap;
 use repl::eval_source;
+
 mod repl;
 
-type Env = HashMap<String, Value>;
+type Env = FnvHashMap<String, Value>;
 type Result<T, E = CranelispError> = std::result::Result<T, E>;
 type Span = Range<usize>;
 
@@ -66,6 +71,9 @@ fn provide_diagnostic(error: CranelispError, program: impl Into<ariadne::Source>
         CranelispError::EOF => todo!("EOF"),
         CranelispError::UnexpectedEOF(_, _) => todo!("UnexpectedEOF"),
         CranelispError::ReplIO(_) => todo!("IO"),
+        CranelispError::Eval(e) => {
+            dbg!(e);
+        }
     }
 }
 

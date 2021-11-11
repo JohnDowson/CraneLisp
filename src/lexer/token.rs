@@ -14,6 +14,7 @@ pub enum Token {
     Loop(Span),
     If(Span),
     Return(Span),
+    Let(Span),
 }
 
 impl Token {
@@ -34,6 +35,7 @@ impl Token {
             Token::Loop(s) => s.start,
             Token::If(s) => s.start,
             Token::Return(s) => s.start,
+            Token::Let(s) => s.start,
         }
     }
     pub fn span_end(&self) -> usize {
@@ -50,6 +52,14 @@ impl Token {
             Token::Loop(s) => s.end,
             Token::If(s) => s.end,
             Token::Return(s) => s.end,
+            Token::Let(s) => s.end,
+        }
+    }
+
+    pub fn symbol_inner(self) -> String {
+        match self {
+            Token::Symbol(s, _) => s,
+            _ => panic!("Called sumbol_inner on non symbol token"),
         }
     }
 
@@ -62,6 +72,7 @@ impl Token {
             Token::Loop(_) => true,
             Token::If(_) => true,
             Token::Return(_) => todo!("I think this is none?"),
+            Token::Let(_) => todo!("Is this valued? Dunno"),
             Token::Quote(_) => todo!("Is this valued? Dunno"),
             _ => false,
         }
@@ -83,6 +94,7 @@ impl Debug for Token {
             Token::Loop(_) => write!(fmt, "loop"),
             Token::If(_) => write!(fmt, "?"),
             Token::Return(_) => write!(fmt, "return"),
+            Token::Let(_) => write!(fmt, "let"),
         }
     }
 }

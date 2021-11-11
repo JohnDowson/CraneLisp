@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::ops::Range;
 
 use crate::eval::Type;
@@ -8,7 +9,7 @@ use somok::Somok;
 
 pub type Arglist = Vec<(String, Type)>;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Expr {
     Symbol(String, Meta),
     Number(f64, Meta),
@@ -18,6 +19,72 @@ pub enum Expr {
     If(Box<Expr>, Box<Expr>, Box<Expr>, Meta),
     Return(Option<Box<Expr>>, Meta),
     Loop(Box<Expr>, Meta),
+    Let(String, Box<Expr>, Meta),
+}
+
+impl Debug for Expr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !f.alternate() {
+            match self {
+                Self::Symbol(arg0, arg1) => {
+                    f.debug_tuple("Symbol").field(arg0).field(arg1).finish()
+                }
+                Self::Number(arg0, arg1) => {
+                    f.debug_tuple("Number").field(arg0).field(arg1).finish()
+                }
+                Self::List(arg0, arg1) => f.debug_tuple("List").field(arg0).field(arg1).finish(),
+                Self::Quoted(arg0, arg1) => {
+                    f.debug_tuple("Quoted").field(arg0).field(arg1).finish()
+                }
+                Self::Defun(arg0, arg1, arg2, arg3) => f
+                    .debug_tuple("Defun")
+                    .field(arg0)
+                    .field(arg1)
+                    .field(arg2)
+                    .field(arg3)
+                    .finish(),
+                Self::If(arg0, arg1, arg2, arg3) => f
+                    .debug_tuple("If")
+                    .field(arg0)
+                    .field(arg1)
+                    .field(arg2)
+                    .field(arg3)
+                    .finish(),
+                Self::Return(arg0, arg1) => {
+                    f.debug_tuple("Return").field(arg0).field(arg1).finish()
+                }
+                Self::Loop(arg0, arg1) => f.debug_tuple("Loop").field(arg0).field(arg1).finish(),
+                Self::Let(arg0, arg1, arg2) => f
+                    .debug_tuple("Let")
+                    .field(arg0)
+                    .field(arg1)
+                    .field(arg2)
+                    .finish(),
+            }
+        } else {
+            match self {
+                Self::Symbol(arg0, ..) => f.debug_tuple("Symbol").field(arg0).finish(),
+                Self::Number(arg0, ..) => f.debug_tuple("Number").field(arg0).finish(),
+                Self::List(arg0, ..) => f.debug_tuple("List").field(arg0).finish(),
+                Self::Quoted(arg0, ..) => f.debug_tuple("Quoted").field(arg0).finish(),
+                Self::Defun(arg0, arg1, arg2, ..) => f
+                    .debug_tuple("Defun")
+                    .field(arg0)
+                    .field(arg1)
+                    .field(arg2)
+                    .finish(),
+                Self::If(arg0, arg1, arg2, ..) => f
+                    .debug_tuple("If")
+                    .field(arg0)
+                    .field(arg1)
+                    .field(arg2)
+                    .finish(),
+                Self::Return(arg0, ..) => f.debug_tuple("Return").field(arg0).finish(),
+                Self::Loop(arg0, ..) => f.debug_tuple("Loop").field(arg0).finish(),
+                Self::Let(arg0, arg1, ..) => f.debug_tuple("Let").field(arg0).field(arg1).finish(),
+            }
+        }
+    }
 }
 
 impl Expr {
@@ -31,11 +98,12 @@ impl Expr {
             Expr::If(_, _, _, m) => m,
             Expr::Return(_, m) => m,
             Expr::Loop(_, m) => m,
+            Expr::Let(_, _, m) => m,
         }
         .clone()
     }
 
-    fn span(&self) -> Span {
+    pub fn span(&self) -> Span {
         match self {
             Expr::Symbol(_, m) => m,
             Expr::Number(_, m) => m,
@@ -45,9 +113,24 @@ impl Expr {
             Expr::If(_, _, _, m) => m,
             Expr::Return(_, m) => m,
             Expr::Loop(_, m) => m,
+            Expr::Let(_, _, m) => m,
         }
         .span
         .clone()
+    }
+
+    pub fn is_valued(&self) -> bool {
+        match self {
+            Expr::Symbol(_, _) => true,
+            Expr::Number(_, _) => true,
+            Expr::List(_, _) => true,
+            Expr::Quoted(_, _) => todo!(),
+            Expr::Defun(_, _, _, _) => true,
+            Expr::If(_, _, _, _) => true,
+            Expr::Return(_, _) => todo!(),
+            Expr::Loop(_, _) => todo!(),
+            Expr::Let(..) => false,
+        }
     }
 
     pub fn number(self) -> f64 {
@@ -167,7 +250,9 @@ impl Parser {
                 let args = self.eat_arglist()?;
                 let body = self.parse_expr()?;
                 match body {
-                    body @ Expr::List(..) => {
+                    // This is a hack to test JIT: Function body should b a list
+                    body
+                    @ (Expr::List(..) | Expr::Number(..) | Expr::Symbol(..) | Expr::If(..)) => {
                         let span = token.span_start()..body.span().end;
                         Expr::Defun(args, Box::new(body), ret, Meta { span }).okay()
                     }
@@ -227,6 +312,15 @@ impl Parser {
                 }
                 Expr::Return(value, Meta { span: token.span() }).okay()
             }
+            Ok(token @ Token::Let(..)) => match (self.lexer.next_token()?, self.parse_expr()?) {
+                (sym @ Token::Symbol(_, _), expr) if expr.is_valued() => Expr::Let(
+                    sym.symbol_inner(),
+                    Box::new(expr),
+                    Meta { span: token.span() },
+                )
+                .okay(),
+                _ => todo!("Handle case when there is no let body"),
+            },
 
             Ok(Token::Eof(..)) => CranelispError::EOF.error(),
             Err(e) => e.error(),

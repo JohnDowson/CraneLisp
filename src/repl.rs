@@ -4,9 +4,11 @@ use rustyline::{
 };
 use rustyline::{Editor, Result as RLResult};
 use rustyline_derive::{Completer, Helper, Highlighter, Hinter};
+use somok::Somok;
 
 use crate::{
     eval::{self, FnBody, Signature, Type, Value},
+    jit::Jit,
     lexer::Lexer,
     parser::Parser,
     provide_diagnostic, Env, Result,
@@ -23,6 +25,7 @@ impl Validator for InputValidator {
 }
 
 pub fn repl(time: bool, ast: bool, tt: bool) -> Result<()> {
+    let mut jit = Jit::default();
     let h = InputValidator {
         brackets: MatchingBracketValidator::new(),
     };
@@ -34,11 +37,10 @@ pub fn repl(time: bool, ast: bool, tt: bool) -> Result<()> {
     let mut rl = Editor::with_config(config);
     rl.set_helper(Some(h));
 
-    let env = eval_env();
+    let mut env = eval_env();
 
     loop {
         // (:(a b) (+ a b) 1 2)
-        let env = env.clone();
         let src = rl.readline("> ")?;
         if let "q\n" = &*src {
             break;
@@ -55,14 +57,14 @@ pub fn repl(time: bool, ast: bool, tt: bool) -> Result<()> {
             parser.parse_expr()
         };
         match tree {
-            Err(e) => provide_diagnostic(e, src),
+            Err(e) => provide_diagnostic(e, src), // TODO: handle all erors externaly, including eval errors
             Ok(e) => {
                 if ast {
                     println!("{:#?}", &e)
                 }
-                let evaluated = eval::eval(e, env);
+                let evaluated = eval::eval(e, &mut env, &mut jit);
                 let t2 = std::time::Instant::now();
-                println!("{:#?}", evaluated);
+                println!("{:#?}", evaluated?);
                 if time {
                     println!("Exec time: {:#?}", t2 - t1)
                 }
@@ -73,8 +75,8 @@ pub fn repl(time: bool, ast: bool, tt: bool) -> Result<()> {
 }
 
 fn eval_env() -> Env {
-    type EnvLit<const N: usize> = [(String, Value); N];
-    let env_lit: EnvLit<2> = [
+    //type EnvLit<const N: usize> = [(String, Value); N];
+    let env_lit = [
         (
             "+".to_string(),
             Value::func(
@@ -97,12 +99,123 @@ fn eval_env() -> Env {
                 FnBody::Native(|e| e.get("a").and_then(|a| e.get("b").map(|b| a - b)).unwrap()),
             ),
         ),
+        (
+            "*".to_string(),
+            Value::func(
+                Signature::build()
+                    .set_ret(Type::Number)
+                    .push_arg(("a".into(), Type::Number))
+                    .push_arg(("b".into(), Type::Number))
+                    .finish(),
+                FnBody::Native(|e| e.get("a").and_then(|a| e.get("b").map(|b| a * b)).unwrap()),
+            ),
+        ),
+        (
+            "/".to_string(),
+            Value::func(
+                Signature::build()
+                    .set_ret(Type::Number)
+                    .push_arg(("a".into(), Type::Number))
+                    .push_arg(("b".into(), Type::Number))
+                    .finish(),
+                FnBody::Native(|e| e.get("a").and_then(|a| e.get("b").map(|b| a / b)).unwrap()),
+            ),
+        ),
+        (
+            "<".to_string(),
+            Value::func(
+                Signature::build()
+                    .set_ret(Type::Number)
+                    .push_arg(("a".into(), Type::Number))
+                    .push_arg(("b".into(), Type::Number))
+                    .finish(),
+                FnBody::Native(|e| {
+                    e.get("a")
+                        .and_then(|a| {
+                            e.get("b")
+                                .map(|b| if a < b { Value::TRUE } else { Value::FALSE })
+                        })
+                        .unwrap()
+                }),
+            ),
+        ),
+        (
+            ">".to_string(),
+            Value::func(
+                Signature::build()
+                    .set_ret(Type::Number)
+                    .push_arg(("a".into(), Type::Number))
+                    .push_arg(("b".into(), Type::Number))
+                    .finish(),
+                FnBody::Native(|e| {
+                    e.get("a")
+                        .and_then(|a| {
+                            e.get("b")
+                                .map(|b| if a > b { Value::TRUE } else { Value::FALSE })
+                        })
+                        .unwrap()
+                }),
+            ),
+        ),
+        (
+            "print".to_string(),
+            Value::func(
+                Signature::build()
+                    .set_ret(Type::Number)
+                    .push_arg(("a".into(), Type::Number))
+                    .finish(),
+                FnBody::Native(|e| {
+                    e.get("a")
+                        .and_then(|a| {
+                            println!(": {:?}", a);
+                            a.clone().some()
+                        })
+                        .unwrap()
+                }),
+            ),
+        ),
+        (
+            "dbg".to_string(),
+            Value::func(
+                Signature::build()
+                    .set_ret(Type::Number)
+                    .push_arg(("a".into(), Type::Number))
+                    .finish(),
+                FnBody::Native(|e| {
+                    e.get("a")
+                        .and_then(|a| {
+                            eprintln!("dbg: {:?}", a);
+                            a.clone().some()
+                        })
+                        .unwrap()
+                }),
+            ),
+        ),
+        (
+            "eq".to_string(),
+            Value::func(
+                Signature::build()
+                    .set_ret(Type::Number)
+                    .push_arg(("a".into(), Type::Number))
+                    .push_arg(("b".into(), Type::Number))
+                    .finish(),
+                FnBody::Native(|e| {
+                    e.get("a")
+                        .and_then(|a| {
+                            e.get("b")
+                                .map(|b| if a == b { Value::TRUE } else { Value::FALSE })
+                        })
+                        .unwrap()
+                }),
+            ),
+        ),
     ];
     env_lit.into_iter().collect()
 }
 
 pub fn eval_source(src: String, time: bool, ast: bool, tt: bool) -> Result<()> {
-    let env = eval_env();
+    let mut jit = Jit::default();
+    let mut env = eval_env();
 
     if tt {
         println!("{:?}", Lexer::new(src.clone())?.collect())
@@ -121,9 +234,9 @@ pub fn eval_source(src: String, time: bool, ast: bool, tt: bool) -> Result<()> {
             if ast {
                 println!("{:#?}", &e)
             }
-            let evaluated = eval::eval(e, env);
+            let evaluated = eval::eval(e, &mut env, &mut jit);
             let t2 = std::time::Instant::now();
-            println!("{:#?}", evaluated);
+            println!("{:#?}", evaluated?);
             if time {
                 println!("Exec time: {:#?}", t2 - t1)
             }

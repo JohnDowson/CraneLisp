@@ -18,6 +18,14 @@ pub enum CranelispError {
     UnexpectedEOF(Span, String),
     #[error("Couldn't get input: {0}")]
     ReplIO(#[from] rustyline::error::ReadlineError),
+    #[error("")]
+    Eval(EvalError),
+}
+
+#[derive(Debug)]
+pub enum EvalError {
+    Undefined(String, Span),
+    ArityMismatch,
 }
 
 #[derive(Debug)]
