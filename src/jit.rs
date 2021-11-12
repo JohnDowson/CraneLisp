@@ -145,7 +145,7 @@ impl<'a> FunctionTranslator<'a> {
         let merge_block = self.builder.create_block();
 
         self.builder.append_block_param(merge_block, types::F64);
-        let cond_val = self.builder.ins().bitcast(types::I64, cond_val);
+        let cond_val = self.builder.ins().fcvt_to_sint(types::I64, cond_val);
         self.builder.ins().brz(cond_val, lie_block, &[]);
         self.builder.ins().jump(truth_block, &[]);
 
@@ -163,7 +163,6 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.seal_block(merge_block);
 
         let phi = self.builder.block_params(merge_block)[0];
-
         phi
     }
 }
@@ -181,10 +180,6 @@ fn declare_variables(
         let var = declare_variable(types::F64, builder, &mut variables, &mut index, name);
         builder.def_var(var, val);
     }
-    // let zero = builder.ins().f64const(0);
-    // let return_variable =
-    //     declare_variable(types::F64, builder, &mut variables, &mut index, "return");
-    // builder.def_var(return_variable, zero);
 
     declare_variables_in_expr(fun.body(), builder, &mut variables, &mut index);
     variables

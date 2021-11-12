@@ -92,7 +92,7 @@ impl FnBody {
             FnBody::Native(f) => f(env).okay(),
             FnBody::Virtual(expr) => eval(expr.clone(), env, jit),
             FnBody::Jit(ptr) => unsafe {
-                let func = std::mem::transmute::<_, fn(f64) -> f64>(ptr);
+                let func = std::mem::transmute::<*const u8, fn(f64) -> f64>(*ptr);
                 Value::Number(func(1.0)).okay()
             },
         }
