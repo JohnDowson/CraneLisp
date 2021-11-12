@@ -4,10 +4,10 @@ use rustyline::{
 };
 use rustyline::{Editor, Result as RLResult};
 use rustyline_derive::{Completer, Helper, Highlighter, Hinter};
-use somok::Somok;
 
 use crate::{
-    eval::{self, FnBody, Signature, Type, Value},
+    eval::{self, Value},
+    function::{FnBody, Signature, Type},
     jit::Jit,
     lexer::Lexer,
     parser::Parser,
@@ -81,132 +81,135 @@ fn eval_env() -> Env {
             "+".to_string(),
             Value::func(
                 Signature::build()
+                    .set_name("+".into())
                     .set_ret(Type::Number)
-                    .push_arg(("a".into(), Type::Number))
-                    .push_arg(("b".into(), Type::Number))
-                    .finish(),
-                FnBody::Native(|e| e.get("a").and_then(|a| e.get("b").map(|b| a + b)).unwrap()),
+                    .set_foldable(true)
+                    .finish()
+                    .unwrap(),
+                FnBody::Native((|a: f64, b: f64| a + b) as fn(f64, f64) -> f64 as *const u8),
             ),
         ),
         (
             "-".to_string(),
             Value::func(
                 Signature::build()
+                    .set_name("-".into())
                     .set_ret(Type::Number)
-                    .push_arg(("a".into(), Type::Number))
-                    .push_arg(("b".into(), Type::Number))
-                    .finish(),
-                FnBody::Native(|e| e.get("a").and_then(|a| e.get("b").map(|b| a - b)).unwrap()),
+                    .set_foldable(true)
+                    .finish()
+                    .unwrap(),
+                FnBody::Native((|a: f64, b: f64| a - b) as fn(f64, f64) -> f64 as *const u8),
             ),
         ),
         (
             "*".to_string(),
             Value::func(
                 Signature::build()
+                    .set_name("*".into())
                     .set_ret(Type::Number)
-                    .push_arg(("a".into(), Type::Number))
-                    .push_arg(("b".into(), Type::Number))
-                    .finish(),
-                FnBody::Native(|e| e.get("a").and_then(|a| e.get("b").map(|b| a * b)).unwrap()),
+                    .set_foldable(true)
+                    .finish()
+                    .unwrap(),
+                FnBody::Native((|a: f64, b: f64| a * b) as fn(f64, f64) -> f64 as *const u8),
             ),
         ),
         (
             "/".to_string(),
             Value::func(
                 Signature::build()
+                    .set_name("/".into())
                     .set_ret(Type::Number)
-                    .push_arg(("a".into(), Type::Number))
-                    .push_arg(("b".into(), Type::Number))
-                    .finish(),
-                FnBody::Native(|e| e.get("a").and_then(|a| e.get("b").map(|b| a / b)).unwrap()),
+                    .set_foldable(true)
+                    .finish()
+                    .unwrap(),
+                FnBody::Native((|a: f64, b: f64| a / b) as fn(f64, f64) -> f64 as *const u8),
             ),
         ),
         (
             "<".to_string(),
             Value::func(
                 Signature::build()
+                    .set_name("<".into())
                     .set_ret(Type::Number)
                     .push_arg(("a".into(), Type::Number))
                     .push_arg(("b".into(), Type::Number))
-                    .finish(),
-                FnBody::Native(|e| {
-                    e.get("a")
-                        .and_then(|a| {
-                            e.get("b")
-                                .map(|b| if a < b { Value::TRUE } else { Value::FALSE })
-                        })
-                        .unwrap()
-                }),
+                    .finish()
+                    .unwrap(),
+                FnBody::Native(
+                    (|a: f64, b: f64| if a < b { 1.0 } else { 0.0 }) as fn(f64, f64) -> f64
+                        as *const u8,
+                ),
             ),
         ),
         (
             ">".to_string(),
             Value::func(
                 Signature::build()
+                    .set_name(">".into())
                     .set_ret(Type::Number)
                     .push_arg(("a".into(), Type::Number))
                     .push_arg(("b".into(), Type::Number))
-                    .finish(),
-                FnBody::Native(|e| {
-                    e.get("a")
-                        .and_then(|a| {
-                            e.get("b")
-                                .map(|b| if a > b { Value::TRUE } else { Value::FALSE })
-                        })
-                        .unwrap()
-                }),
+                    .finish()
+                    .unwrap(),
+                FnBody::Native(
+                    (|a: f64, b: f64| if a > b { 1.0 } else { 0.0 }) as fn(f64, f64) -> f64
+                        as *const u8,
+                ),
             ),
         ),
         (
             "print".to_string(),
             Value::func(
                 Signature::build()
+                    .set_name("print".into())
                     .set_ret(Type::Number)
                     .push_arg(("a".into(), Type::Number))
-                    .finish(),
-                FnBody::Native(|e| {
-                    e.get("a")
-                        .and_then(|a| {
-                            println!(": {:?}", a);
-                            a.clone().some()
-                        })
-                        .unwrap()
-                }),
+                    .finish()
+                    .unwrap(),
+                FnBody::Native(
+                    (|a: f64| {
+                        println!("{:?}", a);
+                        0.0
+                    }) as fn(f64) -> f64 as *const u8,
+                ),
             ),
         ),
         (
             "dbg".to_string(),
             Value::func(
                 Signature::build()
+                    .set_name("dbg".into())
                     .set_ret(Type::Number)
                     .push_arg(("a".into(), Type::Number))
-                    .finish(),
-                FnBody::Native(|e| {
-                    e.get("a")
-                        .and_then(|a| {
-                            eprintln!("dbg: {:?}", a);
-                            a.clone().some()
-                        })
-                        .unwrap()
-                }),
+                    .finish()
+                    .unwrap(),
+                FnBody::Native(
+                    (|a: f64| {
+                        println!("dbg! {:?}", a);
+                        0.0
+                    }) as fn(f64) -> f64 as *const u8,
+                ),
             ),
         ),
         (
             "eq".to_string(),
             Value::func(
                 Signature::build()
+                    .set_name("eq".into())
                     .set_ret(Type::Number)
                     .push_arg(("a".into(), Type::Number))
                     .push_arg(("b".into(), Type::Number))
-                    .finish(),
-                FnBody::Native(|e| {
-                    e.get("a")
-                        .and_then(|a| {
-                            e.get("b")
-                                .map(|b| if a == b { Value::TRUE } else { Value::FALSE })
-                        })
-                        .unwrap()
-                }),
+                    .finish()
+                    .unwrap(),
+                FnBody::Native(
+                    (|a: f64, b: f64| {
+                        if (a - b).abs() < f64::EPSILON {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }) as fn(f64, f64) -> f64 as *const u8,
+                ),
             ),
         ),
     ];

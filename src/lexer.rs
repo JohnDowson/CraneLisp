@@ -1,4 +1,4 @@
-use crate::eval::Type;
+use crate::function::Type;
 use crate::CranelispError;
 use crate::Result;
 use crate::SyntaxError;

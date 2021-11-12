@@ -3,160 +3,14 @@ use std::{
     ops::{Add, Div, Mul, Sub},
 };
 
-use fnv::{FnvBuildHasher, FnvHashMap};
 use somok::Somok;
 
 use crate::{
+    function::{FnBody, Function, Signature},
     jit::Jit,
-    parser::{Arglist, Expr},
+    parser::{Expr, FnArgs},
     CranelispError, Env, EvalError, Result,
 };
-
-#[derive(Clone)]
-pub struct Function {
-    sig: Signature,
-    body: FnBody,
-}
-
-impl Function {
-    pub fn jit(self, jit: &mut Jit) -> Self {
-        let sig = self.sig.clone();
-        let body = jit.compile(self).unwrap();
-        let body = FnBody::Jit(body);
-        Function { sig, body }
-    }
-    pub fn args(&self) -> Vec<(String, Type)> {
-        self.sig.args.clone()
-    }
-    pub fn body(&self) -> Expr {
-        match &self.body {
-            FnBody::Native(_) => todo!(),
-            FnBody::Virtual(e) => e.clone(),
-            FnBody::Jit(_) => todo!(),
-        }
-    }
-
-    pub fn arity(&self) -> usize {
-        self.sig.arity()
-    }
-    pub fn call(&self, mut args: Vec<Value>, env: &mut Env, jit: &mut Jit) -> Result<Value> {
-        if self.arity() != args.len() && self.arity() != usize::MAX {
-            return CranelispError::Eval(EvalError::ArityMismatch).error();
-        }
-        let mut predefined =
-            FnvHashMap::with_capacity_and_hasher(args.len(), FnvBuildHasher::default());
-        for (i, (name, _ty)) in self.sig.args.iter().enumerate().rev() {
-            // TODO: check types, but probably earlier
-            if let Some(v) = env.insert(name.clone(), args.remove(i)) {
-                predefined.insert(name, v);
-            };
-        }
-
-        let ret = self.body.call(env, jit);
-        for (name, _ty) in self.sig.args.iter() {
-            if let Some(val) = predefined.remove(name) {
-                env.entry(name.clone()).and_modify(|v| *v = val);
-            } else {
-                env.remove(name);
-            }
-        }
-        ret
-    }
-}
-
-impl Debug for Function {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.body {
-            FnBody::Native(_) => writeln!(f, "Native function")?,
-            FnBody::Virtual(e) => writeln!(f, "Virtual function \n{:#?}", e.clone().unwrap_list())?,
-            FnBody::Jit(_) => writeln!(f, "Jit function")?,
-        };
-        writeln!(
-            f,
-            "{:?} => {:?}",
-            self.sig.args.iter().map(|(_, t)| t).collect::<Vec<_>>(),
-            self.sig.ret
-        )
-    }
-}
-
-#[derive(Clone)]
-pub enum FnBody {
-    Native(fn(&Env) -> Value),
-    Virtual(Expr),
-    Jit(*const u8),
-}
-impl FnBody {
-    fn call(&self, env: &mut Env, jit: &mut Jit) -> Result<Value> {
-        match self {
-            FnBody::Native(f) => f(env).okay(),
-            FnBody::Virtual(expr) => eval(expr.clone(), env, jit),
-            FnBody::Jit(ptr) => unsafe {
-                let func = std::mem::transmute::<*const u8, fn(f64) -> f64>(*ptr);
-                Value::Number(func(1.0)).okay()
-            },
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct Signature {
-    args: Vec<(String, Type)>,
-    ret: Type,
-}
-
-pub struct SignatureBuilder {
-    args: Vec<(String, Type)>,
-    ret: Option<Type>,
-}
-impl SignatureBuilder {
-    pub fn set_ret(mut self, t: Type) -> Self {
-        self.ret = Some(t);
-        self
-    }
-
-    pub fn push_arg(mut self, arg: (String, Type)) -> Self {
-        self.args.push(arg);
-        self
-    }
-    pub fn finish(self) -> Signature {
-        Signature {
-            args: self.args,
-            ret: self.ret.unwrap(),
-        }
-    }
-}
-
-impl Signature {
-    pub fn build() -> SignatureBuilder {
-        SignatureBuilder {
-            args: vec![],
-            ret: None,
-        }
-    }
-
-    pub fn build_from_arglist(args: Arglist) -> SignatureBuilder {
-        SignatureBuilder { args, ret: None }
-    }
-
-    pub fn arity(&self) -> usize {
-        self.args.len()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum Type {
-    Number,
-}
-
-impl Type {
-    pub fn from_str(str: &str) -> Option<Self> {
-        match str {
-            "Num" => Self::Number.some(),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Clone)]
 pub enum Value {
@@ -174,15 +28,22 @@ impl Value {
         Self::Number(n)
     }
     pub fn func(sig: Signature, body: FnBody) -> Self {
-        Value::Func(Function { sig, body })
+        Value::Func(Function::new(sig, body))
     }
 
-    fn unwrap_fn(self) -> Function {
+    pub fn unwrap_fn(self) -> Function {
         match self {
             Value::Number(_) => panic!("Called 'unwrap_fn' on a value of type Number"),
             Value::None => panic!("Called 'unwrap_fn' on a value of type None"),
             Value::Return(..) => panic!("Called 'unwrap_fn' on a value of type Return"),
             Value::Func(f) => f,
+        }
+    }
+
+    pub fn unwrap_number(self) -> f64 {
+        match self {
+            Value::Number(n) => n,
+            _ => panic!("Called 'unwrap_number' on a non number value"),
         }
     }
 
@@ -337,16 +198,23 @@ pub fn eval(expr: Expr, env: &mut Env, jit: &mut Jit) -> Result<Value> {
                 .into_iter()
                 .map(|e| eval(e, env, jit))
                 .collect::<Result<Vec<_>>>()?;
-            fun.unwrap_fn().call(values, env, jit)
+            fun.unwrap_fn().call(values)
         }
         Expr::Quoted(_, _) => todo!("Deal vith evaluating things that shouldn't be evaluated"),
-        Expr::Defun(args, body, ret, _) => {
-            let sig = Signature::build_from_arglist(args).set_ret(ret).finish();
-            let func = Function {
-                sig,
-                body: FnBody::Virtual(*body),
-            }
-            .jit(jit);
+        Expr::Defun(name, args, body, ret, _) => {
+            let sig = match args {
+                FnArgs::Arglist(args) => Signature::build_from_arglist(args)
+                    .set_name(name.clone())
+                    .set_ret(ret)
+                    .finish()?,
+                FnArgs::Foldable => Signature::build()
+                    .set_foldable(true)
+                    .set_name(name.clone())
+                    .set_ret(ret)
+                    .finish()?,
+            };
+            let func = Function::new(sig, FnBody::Virtual(*body)).jit(jit)?;
+            env.insert(name, Value::Func(func.clone()));
             Value::Func(func).okay()
         }
         Expr::Let(_sym, expr, _) => eval(*expr, env, jit),

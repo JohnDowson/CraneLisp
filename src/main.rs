@@ -3,9 +3,9 @@ mod eval;
 mod lexer;
 mod parser;
 
+mod function;
 #[allow(dead_code, unused_imports)]
 mod jit;
-
 use clap::Parser;
 use eval::Value;
 mod errors;
@@ -30,6 +30,12 @@ struct Args {
     #[clap(short, long)]
     exec: Option<Vec<String>>,
     source: Option<String>,
+}
+
+#[no_mangle]
+pub extern "C" fn cl_print(n: f64) -> f64 {
+    println!("{}", n);
+    0.0
 }
 
 fn main() -> Result<()> {
@@ -74,6 +80,7 @@ fn provide_diagnostic(error: CranelispError, program: impl Into<ariadne::Source>
         CranelispError::Eval(e) => {
             dbg!(e);
         }
+        CranelispError::JIT(_) => todo!(),
     }
 }
 

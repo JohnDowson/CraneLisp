@@ -1,194 +1,18 @@
-use std::fmt::Debug;
-use std::ops::Range;
-
-use crate::eval::Type;
+use crate::function::Type;
 use crate::lexer::{Lexer, Token};
-use crate::{CranelispError, Result, Span, SyntaxError};
+use crate::parser::expr::Meta;
+use crate::{errors, CranelispError, Result, SyntaxError};
 use log::trace;
 use somok::Somok;
+mod expr;
+pub use expr::Expr;
 
+#[derive(Debug, Clone)]
+pub enum FnArgs {
+    Arglist(Arglist),
+    Foldable,
+}
 pub type Arglist = Vec<(String, Type)>;
-
-#[derive(Clone)]
-pub enum Expr {
-    Symbol(String, Meta),
-    Number(f64, Meta),
-    List(Vec<Expr>, Meta),
-    Quoted(Box<Expr>, Meta),
-    Defun(Arglist, Box<Expr>, Type, Meta),
-    If(Box<Expr>, Box<Expr>, Box<Expr>, Meta),
-    Return(Option<Box<Expr>>, Meta),
-    Loop(Box<Expr>, Meta),
-    Let(String, Box<Expr>, Meta),
-}
-
-impl Debug for Expr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if !f.alternate() {
-            match self {
-                Self::Symbol(arg0, arg1) => {
-                    f.debug_tuple("Symbol").field(arg0).field(arg1).finish()
-                }
-                Self::Number(arg0, arg1) => {
-                    f.debug_tuple("Number").field(arg0).field(arg1).finish()
-                }
-                Self::List(arg0, arg1) => f.debug_tuple("List").field(arg0).field(arg1).finish(),
-                Self::Quoted(arg0, arg1) => {
-                    f.debug_tuple("Quoted").field(arg0).field(arg1).finish()
-                }
-                Self::Defun(arg0, arg1, arg2, arg3) => f
-                    .debug_tuple("Defun")
-                    .field(arg0)
-                    .field(arg1)
-                    .field(arg2)
-                    .field(arg3)
-                    .finish(),
-                Self::If(arg0, arg1, arg2, arg3) => f
-                    .debug_tuple("If")
-                    .field(arg0)
-                    .field(arg1)
-                    .field(arg2)
-                    .field(arg3)
-                    .finish(),
-                Self::Return(arg0, arg1) => {
-                    f.debug_tuple("Return").field(arg0).field(arg1).finish()
-                }
-                Self::Loop(arg0, arg1) => f.debug_tuple("Loop").field(arg0).field(arg1).finish(),
-                Self::Let(arg0, arg1, arg2) => f
-                    .debug_tuple("Let")
-                    .field(arg0)
-                    .field(arg1)
-                    .field(arg2)
-                    .finish(),
-            }
-        } else {
-            match self {
-                Self::Symbol(arg0, ..) => f.debug_tuple("Symbol").field(arg0).finish(),
-                Self::Number(arg0, ..) => f.debug_tuple("Number").field(arg0).finish(),
-                Self::List(arg0, ..) => f.debug_tuple("List").field(arg0).finish(),
-                Self::Quoted(arg0, ..) => f.debug_tuple("Quoted").field(arg0).finish(),
-                Self::Defun(arg0, arg1, arg2, ..) => f
-                    .debug_tuple("Defun")
-                    .field(arg0)
-                    .field(arg1)
-                    .field(arg2)
-                    .finish(),
-                Self::If(arg0, arg1, arg2, ..) => f
-                    .debug_tuple("If")
-                    .field(arg0)
-                    .field(arg1)
-                    .field(arg2)
-                    .finish(),
-                Self::Return(arg0, ..) => f.debug_tuple("Return").field(arg0).finish(),
-                Self::Loop(arg0, ..) => f.debug_tuple("Loop").field(arg0).finish(),
-                Self::Let(arg0, arg1, ..) => f.debug_tuple("Let").field(arg0).field(arg1).finish(),
-            }
-        }
-    }
-}
-
-impl Expr {
-    fn meta(&self) -> Meta {
-        match self {
-            Expr::Symbol(_, m) => m,
-            Expr::Number(_, m) => m,
-            Expr::List(_, m) => m,
-            Expr::Quoted(_, m) => m,
-            Expr::Defun(_, _, _, m) => m,
-            Expr::If(_, _, _, m) => m,
-            Expr::Return(_, m) => m,
-            Expr::Loop(_, m) => m,
-            Expr::Let(_, _, m) => m,
-        }
-        .clone()
-    }
-
-    pub fn span(&self) -> Span {
-        match self {
-            Expr::Symbol(_, m) => m,
-            Expr::Number(_, m) => m,
-            Expr::List(_, m) => m,
-            Expr::Quoted(_, m) => m,
-            Expr::Defun(_, _, _, m) => m,
-            Expr::If(_, _, _, m) => m,
-            Expr::Return(_, m) => m,
-            Expr::Loop(_, m) => m,
-            Expr::Let(_, _, m) => m,
-        }
-        .span
-        .clone()
-    }
-
-    pub fn is_valued(&self) -> bool {
-        match self {
-            Expr::Symbol(_, _) => true,
-            Expr::Number(_, _) => true,
-            Expr::List(_, _) => true,
-            Expr::Quoted(_, _) => todo!(),
-            Expr::Defun(_, _, _, _) => true,
-            Expr::If(_, _, _, _) => true,
-            Expr::Return(_, _) => todo!(),
-            Expr::Loop(_, _) => todo!(),
-            Expr::Let(..) => false,
-        }
-    }
-
-    pub fn number(self) -> f64 {
-        match self {
-            Expr::Number(n, _) => n,
-            _ => unreachable!(),
-        }
-    }
-
-    fn from_token(token: &Token) -> Result<Self, ()> {
-        match token {
-            Token::Number(val, span) => Ok(Expr::Number(*val, Meta { span: span.clone() })),
-            Token::Symbol(val, span) => Ok(Expr::Symbol(val.clone(), Meta { span: span.clone() })),
-            _ => Err(()),
-        }
-    }
-
-    /// Returns `true` if the expr is [`Symbol`].
-    ///
-    /// [`Symbol`]: Expr::Symbol
-    pub fn is_symbol(&self) -> bool {
-        matches!(self, Self::Symbol(..))
-    }
-
-    /// Returns `true` if the expr is [`List`].
-    ///
-    /// [`List`]: Expr::List
-    pub fn is_list(&self) -> bool {
-        matches!(self, Self::List(..))
-    }
-
-    /// Returns inner list of expressions
-    /// Panics if `self` is not [`List`].
-    ///
-    /// [`List`]: Expr::List
-    pub fn unwrap_list(self) -> Vec<Expr> {
-        match self {
-            Expr::List(v, _) => v,
-            _ => panic!("Called `as_list` on non-List instance of Expr"),
-        }
-    }
-
-    /// Returns inner sumbol
-    /// Panics if `self` is not [`Symbol`].
-    ///
-    /// [`Symbol`]: Expr::Symbol
-    pub fn unwrap_symbol(self) -> String {
-        match self {
-            Expr::Symbol(v, _) => v,
-            _ => panic!("Called `as_symbol` on non-Symbol instance of Expr"),
-        }
-    }
-}
-
-#[derive(Default, Debug, Clone)]
-pub struct Meta {
-    span: Range<usize>,
-}
 
 pub struct Parser {
     lexer: Lexer,
@@ -246,15 +70,14 @@ impl Parser {
             Ok(Token::String(..)) => todo!("String exprs are unimplemented"),
 
             Ok(token @ Token::Defun(..)) => {
+                let name = self.eat_symbol()?;
                 let ret = self.eat_type()?;
                 let args = self.eat_arglist()?;
                 let body = self.parse_expr()?;
                 match body {
-                    // This is a hack to test JIT: Function body should b a list
-                    body
-                    @ (Expr::List(..) | Expr::Number(..) | Expr::Symbol(..) | Expr::If(..)) => {
+                    body @ Expr::List(..) => {
                         let span = token.span_start()..body.span().end;
-                        Expr::Defun(args, Box::new(body), ret, Meta { span }).okay()
+                        Expr::Defun(name, args, Box::new(body), ret, Meta { span }).okay()
                     }
                     body => CranelispError::Syntax(SyntaxError::FunctionHasNoBody(
                         token.span(),
@@ -265,16 +88,20 @@ impl Parser {
                     //    SyntaxError::FunctionHasNoArglist(token.span(), args.span()),
                 }
             }
-            Ok(_token @ Token::Type(..)) => {
-                todo!("Error for type where no type expected")
-            }
+            Ok(token @ Token::Type(..)) => errors::syntax(SyntaxError::UnexpectedToken(
+                token.span(),
+                format!("type {:?} when type is not expected", token),
+            )),
             Ok(token @ Token::Loop(..)) => match self.parse_expr()? {
                 body @ Expr::List(..) => {
                     let span = token.span();
                     Expr::Loop(Box::new(body), Meta { span })
                 }
                 .okay(),
-                _ => todo!(),
+                _ => errors::syntax(SyntaxError::UnexpectedToken(
+                    token.span(),
+                    format!("got {:?} when list is expected", token),
+                )),
             },
             Ok(token @ Token::If(..)) => {
                 match (self.parse_expr()?, self.parse_expr()?, self.parse_expr()?) {
@@ -319,7 +146,10 @@ impl Parser {
                     Meta { span: token.span() },
                 )
                 .okay(),
-                _ => todo!("Handle case when there is no let body"),
+                (t1, t2) => errors::syntax(SyntaxError::UnexpectedToken(
+                    t1.span_start()..t2.span().end,
+                    format!("got ({:?} {:?}) when expecting (symbol list)", t1, t2),
+                )),
             },
 
             Ok(Token::Eof(..)) => CranelispError::EOF.error(),
@@ -331,14 +161,16 @@ impl Parser {
         match self.lexer.next_token() {
             token @ Ok(Token::LParen(..)) => token,
             Ok(token) => {
-                // TODO this should be unexpected token
-                CranelispError::Syntax(SyntaxError::MissingType(token.span())).error()?
+                return errors::syntax(SyntaxError::UnexpectedToken(
+                    token.span(),
+                    format!("got {:?} when expecting lparen", token),
+                ));
             }
             Err(_) => todo!(),
         }
     }
 
-    fn eat_arglist(&mut self) -> Result<Arglist> {
+    fn eat_arglist(&mut self) -> Result<FnArgs> {
         let mut arglist: Arglist = Vec::new();
         let _lparen = match self.lexer.next_token() {
             Ok(token @ Token::LParen(..)) => token,
@@ -347,11 +179,17 @@ impl Parser {
         };
         loop {
             let symbol = match self.lexer.next_token() {
-                Ok(_token @ Token::RParen(..)) => return arglist.okay(),
+                Ok(_token @ Token::RParen(..)) => return FnArgs::Arglist(arglist).okay(),
+                Ok(Token::Symbol(s, ..)) if s == "*" => {
+                    self.eat_rparen()?;
+                    return FnArgs::Foldable.okay();
+                }
                 Ok(Token::Symbol(s, ..)) => s,
                 Ok(token) => {
-                    // TODO: General "UnexpectedToken" error
-                    return CranelispError::Syntax(SyntaxError::MissingType(token.span())).error();
+                    return errors::syntax(SyntaxError::UnexpectedToken(
+                        token.span(),
+                        format!("got {:?} when expecting symbol", token),
+                    ));
                 }
                 Err(_) => todo!(),
             };
@@ -359,13 +197,31 @@ impl Parser {
             let ty = match self.lexer.next_token() {
                 Ok(Token::Type(t, ..)) => t,
                 Ok(token) => {
-                    // TODO: General "UnexpectedToken" error
-                    CranelispError::Syntax(SyntaxError::MissingType(token.span())).error()?
+                    return errors::syntax(SyntaxError::UnexpectedToken(
+                        token.span(),
+                        format!("got {:?} when expecting type", token),
+                    ))
                 }
                 Err(_) => todo!(),
             };
 
             arglist.push((symbol, ty));
+        }
+    }
+
+    fn eat_rparen(&mut self) -> Result<Token> {
+        match self.lexer.next_token() {
+            Ok(token @ Token::RParen(..)) => token.okay(),
+
+            Ok(token @ Token::Eof(..)) => {
+                CranelispError::UnexpectedEOF(token.span(), "when expecting rparen".to_string())
+                    .error()
+            }
+            Ok(t) => errors::syntax(SyntaxError::UnexpectedToken(
+                t.span(),
+                format!("got {:?} when rparen is expected", t),
+            )),
+            Err(e) => e.error(),
         }
     }
 
@@ -378,6 +234,22 @@ impl Parser {
             )
             .error(),
             Ok(tok) => CranelispError::Syntax(SyntaxError::MissingType(tok.span())).error(),
+            Err(e) => e.error(),
+        }
+    }
+
+    fn eat_symbol(&mut self) -> Result<String> {
+        match self.lexer.next_token() {
+            Ok(Token::Symbol(name, ..)) => name.okay(),
+            Ok(tok @ Token::Eof(..)) => CranelispError::UnexpectedEOF(
+                tok.span(),
+                "Unexpected EOF when expecting Symbol".into(),
+            )
+            .error(),
+            Ok(tok) => errors::syntax(SyntaxError::UnexpectedToken(
+                tok.span(),
+                format!("got {:?} when expecting Symbol", tok),
+            )),
             Err(e) => e.error(),
         }
     }
