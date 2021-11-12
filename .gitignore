@@ -1,1 +1,4 @@
 /target
+*.svg
+*.crl
+perf.data*

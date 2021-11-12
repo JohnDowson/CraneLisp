@@ -1,6 +1,8 @@
 use std::fmt::Display;
 
-use crate::Span;
+use somok::Somok;
+
+use crate::{Result, Span};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CranelispError {
@@ -20,12 +22,24 @@ pub enum CranelispError {
     ReplIO(#[from] rustyline::error::ReadlineError),
     #[error("")]
     Eval(EvalError),
+    #[error("Couldn't get input: {0}")]
+    JIT(#[from] cranelift_module::ModuleError),
+}
+
+pub fn syntax<T>(error: SyntaxError) -> Result<T> {
+    CranelispError::Syntax(error).error()
+}
+
+pub fn eval<T>(error: EvalError) -> Result<T> {
+    CranelispError::Eval(error).error()
 }
 
 #[derive(Debug)]
 pub enum EvalError {
     Undefined(String, Span),
     ArityMismatch,
+    InvalidSignature(String),
+    UnexpectedVirtualFunction(Span),
 }
 
 #[derive(Debug)]
@@ -33,6 +47,7 @@ pub enum SyntaxError {
     UnmatchedParen(Span, Span),
     UnexpectedCharacter(Span, char),
     InvalidLiteral(Span, String),
+    UnexpectedToken(Span, String),
 
     FunctionHasNoBody(Span, Span),
     FunctionHasNoArglist(Span, Span),
@@ -47,6 +62,7 @@ impl SyntaxError {
             SyntaxError::UnmatchedParen(a, b, ..) => vec![a.clone(), b.clone()],
             SyntaxError::UnexpectedCharacter(a, ..) => vec![a.clone()],
             SyntaxError::InvalidLiteral(a, ..) => vec![a.clone()],
+            SyntaxError::UnexpectedToken(a, ..) => vec![a.clone()],
 
             SyntaxError::FunctionHasNoBody(a, b) => vec![a.clone(), b.clone()],
             SyntaxError::FunctionHasNoArglist(a, b) => vec![a.clone(), b.clone()],
@@ -63,6 +79,7 @@ impl Display for SyntaxError {
             SyntaxError::UnmatchedParen(_, _) => "Unmatched paren".into(),
             SyntaxError::UnexpectedCharacter(_, c) => format!("Unexpected character {}", c),
             SyntaxError::InvalidLiteral(_, s) => format!("Invalid numeric literal {}", s),
+            SyntaxError::UnexpectedToken(_, s) => format!("Unexpected token {}", s),
 
             SyntaxError::FunctionHasNoBody(_, _) => "Functions must have body".to_string(),
             SyntaxError::FunctionHasNoArglist(_, _) => "Functions must have arglist".to_string(),

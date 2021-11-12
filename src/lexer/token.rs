@@ -1,4 +1,4 @@
-use crate::{eval::Type, Span};
+use crate::{function::Type, Span};
 use std::fmt::Debug;
 #[derive(Clone)]
 pub enum Token {
