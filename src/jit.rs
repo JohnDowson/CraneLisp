@@ -1,40 +1,72 @@
-use cranelift::codegen::ir::{types, Function};
+use cranelift::codegen::ir::types; //, Function};
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{DataContext, Linkage, Module};
+use cranelift_module::{Linkage, Module}; //DataContext
 use fnv::FnvHashMap;
 use std::collections::HashMap;
-use std::slice;
+//use std::slice;
 
 use crate::parser::Expr;
-use crate::{Env, Result};
+use crate::{libcl::*, Result};
 
 pub struct Jit {
     builder_ctx: FunctionBuilderContext,
     ctx: codegen::Context,
-    data_ctx: DataContext,
+    // data_ctx: DataContext,
     module: JITModule,
     fun_lookup: FnvHashMap<String, crate::function::Signature>,
 }
 impl Default for Jit {
     fn default() -> Self {
-        let builder = JITBuilder::new(cranelift_module::default_libcall_names());
+        let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
+        builder.symbol("print", cl_print as *const u8);
+        builder.symbol("+", plus as *const u8);
+        builder.symbol("-", minus as *const u8);
+        builder.symbol("<", less_than as *const u8);
+        builder.symbol(">", more_than as *const u8);
         let module = JITModule::new(builder);
         let mut fun_lookup = FnvHashMap::default();
         fun_lookup.insert(
-            "cl_print".into(),
+            "print".into(),
             crate::function::Signature::build()
-                .set_name("cl_print".into())
+                .set_name("print".into())
                 .push_arg(("a".into(), crate::function::Type::Number))
                 .set_ret(crate::function::Type::Number)
                 .finish()
                 .unwrap(),
         );
         fun_lookup.insert(
-            "puts".into(),
+            "+".into(),
             crate::function::Signature::build()
-                .set_name("puts".into())
-                .push_arg(("s".into(), crate::function::Type::Number))
+                .set_name("+".into())
+                .set_foldable(true)
+                .set_ret(crate::function::Type::Number)
+                .finish()
+                .unwrap(),
+        );
+        fun_lookup.insert(
+            "-".into(),
+            crate::function::Signature::build()
+                .set_name("-".into())
+                .set_foldable(true)
+                .set_ret(crate::function::Type::Number)
+                .finish()
+                .unwrap(),
+        );
+        fun_lookup.insert(
+            "<".into(),
+            crate::function::Signature::build()
+                .set_name("<".into())
+                .set_foldable(true)
+                .set_ret(crate::function::Type::Number)
+                .finish()
+                .unwrap(),
+        );
+        fun_lookup.insert(
+            ">".into(),
+            crate::function::Signature::build()
+                .set_name(">".into())
+                .set_foldable(true)
                 .set_ret(crate::function::Type::Number)
                 .finish()
                 .unwrap(),
@@ -42,7 +74,7 @@ impl Default for Jit {
         Self {
             builder_ctx: FunctionBuilderContext::new(),
             ctx: module.make_context(),
-            data_ctx: DataContext::new(),
+            //  data_ctx: DataContext::new(),
             module,
             fun_lookup,
         }
@@ -168,7 +200,10 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
 
     fn translate_call(&mut self, name: String, exprs: Vec<Expr>) -> Value {
         // TODO this should be an ERROR!
-        let signature = self.fun_lookup.get(&name).expect("Undefined function");
+        let signature = self
+            .fun_lookup
+            .get(dbg! {&name})
+            .expect("Undefined function");
 
         let mut sig = self.module.make_signature();
         if signature.foldable {
