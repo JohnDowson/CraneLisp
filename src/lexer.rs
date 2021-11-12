@@ -136,6 +136,13 @@ impl Lexer {
         )
     }
 
+    fn is_defun(&self) -> bool {
+        matches!(
+            (self.peekn(1), self.peekn(2), self.peekn(3), self.peekn(4),),
+            (Some('e'), Some('f'), Some('u'), Some('n'))
+        )
+    }
+
     pub fn next_token(&mut self) -> Result<Token> {
         if let Some(char) = self.peek() {
             // trace!("{:?}", &*self);
@@ -147,20 +154,21 @@ impl Lexer {
                     self.next_token()
                 }
                 'l' if self.is_loop() => {
-                    for _ in 0..4 {
+                    for _ in b"loop" {
                         self.consume()
                     }
                     Token::Loop(self.next - 4..self.next - 1).okay()
                 }
                 'l' if self.is_let() => {
-                    for _ in 0..3 {
+                    for _ in b"let" {
                         self.consume()
                     }
                     Token::Let(self.next - 3..self.next - 1).okay()
                 }
                 'i' if matches!(self.peekn(1), Some('f')) => {
-                    self.consume();
-                    self.consume();
+                    for _ in b"if" {
+                        self.consume()
+                    }
                     Token::If(self.next - 2..self.next - 1).okay()
                 }
                 '?' => {
@@ -168,7 +176,7 @@ impl Lexer {
                     Token::If(self.next - 1..self.next - 1).okay()
                 }
                 'r' if self.is_return() => {
-                    for _ in 0..6 {
+                    for _ in b"return" {
                         self.consume()
                     }
                     Token::Return(self.next - 6..self.next - 1).okay()
@@ -186,10 +194,17 @@ impl Lexer {
                         )))
                         .map(|ty| Token::Type(ty, start..end))
                 }
-                '|' if matches!(self.peekn(1), Some('>')) => {
-                    self.consume();
-                    self.consume();
+                'd' if self.is_defun() => {
+                    for _ in b"defun" {
+                        self.consume()
+                    }
                     Token::Defun(self.next - 1).okay()
+                }
+                '|' if matches!(self.peekn(1), Some('>')) => {
+                    for _ in b"|>" {
+                        self.consume()
+                    }
+                    todo!("Token::Lambda")
                 }
                 '"' => {
                     self.consume();
