@@ -198,7 +198,7 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn from_str(str: &str) -> Option<Self> {
+    pub fn number_from_str(str: &str) -> Option<Self> {
         match str {
             "Num" => Self::Number.some(),
             _ => None,

@@ -187,7 +187,7 @@ impl Lexer {
                     let symbol =
                         self.consume_until(|c| c.is_whitespace() || ['(', ')'].contains(&c));
                     let end = self.next;
-                    Type::from_str(&symbol)
+                    Type::number_from_str(&symbol)
                         .ok_or(CranelispError::Syntax(SyntaxError::UnknownType(
                             (start - 1)..end,
                             symbol,

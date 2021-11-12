@@ -1,23 +1,11 @@
-use std::{fmt::Debug, fs::File, io::Read, ops::Range};
-mod eval;
-mod lexer;
-mod parser;
+use std::{fmt::Debug, fs::File, io::Read};
 
-mod function;
-#[allow(dead_code, unused_imports)]
-mod jit;
 use clap::Parser;
-use eval::Value;
-mod errors;
+#[allow(dead_code, unused_imports)]
+pub use cranelisp::*;
 pub use errors::*;
-use fnv::FnvHashMap;
 use repl::eval_source;
-
 mod repl;
-
-type Env = FnvHashMap<String, Value>;
-type Result<T, E = CranelispError> = std::result::Result<T, E>;
-type Span = Range<usize>;
 
 #[derive(clap::Parser)]
 struct Args {
@@ -30,12 +18,6 @@ struct Args {
     #[clap(short, long)]
     exec: Option<Vec<String>>,
     source: Option<String>,
-}
-
-#[no_mangle]
-pub extern "C" fn cl_print(n: f64) -> f64 {
-    println!("{}", n);
-    0.0
 }
 
 fn main() -> Result<()> {
