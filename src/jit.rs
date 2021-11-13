@@ -16,61 +16,70 @@ pub struct Jit {
     module: JITModule,
     fun_lookup: FnvHashMap<String, crate::function::Signature>,
 }
+
+macro_rules! defsym {
+    ($builder:expr; $sym:expr => $fun:path) => {
+        $builder.symbol($sym, $fun as *const u8);
+    };
+    ($builder:expr; $fun_lookup:expr; $sym:expr => $fun:path) => {
+        $builder.symbol($sym, $fun as *const u8);
+        $fun_lookup.insert(
+            std::stringify!($fun).into(),
+            crate::function::Signature::build()
+                .set_name(std::stringify!($fun).into())
+                .push_arg(("a".into(), crate::function::Type::Number))
+                .push_arg(("b".into(), crate::function::Type::Number))
+                .set_ret(crate::function::Type::Number)
+                .finish()
+                .unwrap(),
+        );
+    };
+    ($builder:expr; $sym:expr => $fun:expr) => {
+        $builder.symbol($sym, $fun as fn(f64, f64) -> f64 as *const u8);
+    };
+
+    ($builder:expr; $fun_lookup:expr; $sym:expr => $fun:expr) => {
+        $builder.symbol($sym, $fun as fn(f64, f64) -> f64 as *const u8);
+        $fun_lookup.insert(
+            std::stringify!($fun).into(),
+            crate::function::Signature::build()
+                .set_name(std::stringify!($fun).into())
+                .push_arg(("a".into(), crate::function::Type::Number))
+                .push_arg(("b".into(), crate::function::Type::Number))
+                .set_ret(crate::function::Type::Number)
+                .finish()
+                .unwrap(),
+        );
+    };
+    ($builder:expr; $fun:path) => {
+        $builder.symbol(std::stringify!($fun), $fun as *const u8);
+    };
+    ($builder:expr; $fun_lookup:expr; $fun:path) => {
+        $builder.symbol(std::stringify!($fun), $fun as *const u8);
+        $fun_lookup.insert(
+            std::stringify!($fun).into(),
+            crate::function::Signature::build()
+                .set_name(std::stringify!($fun).into())
+                .push_arg(("a".into(), crate::function::Type::Number))
+                .push_arg(("b".into(), crate::function::Type::Number))
+                .set_ret(crate::function::Type::Number)
+                .finish()
+                .unwrap(),
+        );
+    };
+}
+
 impl Default for Jit {
     fn default() -> Self {
         let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
-        builder.symbol("print", cl_print as *const u8);
-        builder.symbol("+", plus as *const u8);
-        builder.symbol("-", minus as *const u8);
-        builder.symbol("<", less_than as *const u8);
-        builder.symbol(">", more_than as *const u8);
-        let module = JITModule::new(builder);
         let mut fun_lookup = FnvHashMap::default();
-        fun_lookup.insert(
-            "print".into(),
-            crate::function::Signature::build()
-                .set_name("print".into())
-                .push_arg(("a".into(), crate::function::Type::Number))
-                .set_ret(crate::function::Type::Number)
-                .finish()
-                .unwrap(),
-        );
-        fun_lookup.insert(
-            "+".into(),
-            crate::function::Signature::build()
-                .set_name("+".into())
-                .set_foldable(true)
-                .set_ret(crate::function::Type::Number)
-                .finish()
-                .unwrap(),
-        );
-        fun_lookup.insert(
-            "-".into(),
-            crate::function::Signature::build()
-                .set_name("-".into())
-                .set_foldable(true)
-                .set_ret(crate::function::Type::Number)
-                .finish()
-                .unwrap(),
-        );
-        fun_lookup.insert(
-            "<".into(),
-            crate::function::Signature::build()
-                .set_name("<".into())
-                .set_foldable(true)
-                .set_ret(crate::function::Type::Number)
-                .finish()
-                .unwrap(),
-        );
-        fun_lookup.insert(
-            ">".into(),
-            crate::function::Signature::build()
-                .set_name(">".into())
-                .set_foldable(true)
-                .set_ret(crate::function::Type::Number)
-                .finish()
-                .unwrap(),
-        );
+        defsym!(builder; fun_lookup; cl_print);
+        defsym!(builder; fun_lookup; "+" => plus);
+        defsym!(builder; fun_lookup; "-" => minus);
+        defsym!(builder; fun_lookup; "<" => less_than);
+        defsym!(builder; fun_lookup; ">" => more_than);
+        defsym!(builder; fun_lookup; "foo" => |a, b| a + b);
+        let module = JITModule::new(builder);
         Self {
             builder_ctx: FunctionBuilderContext::new(),
             ctx: module.make_context(),
@@ -198,6 +207,10 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
         }
     }
 
+    fn _translate_loop(&mut self, _name: String, _expr: Expr) -> Value {
+        todo!()
+    }
+
     fn translate_call(&mut self, name: String, exprs: Vec<Expr>) -> Value {
         // TODO this should be an ERROR!
         let signature = self
@@ -322,7 +335,13 @@ fn declare_variables_in_expr(
         }
         Expr::Return(Some(expr), _) => declare_variables_in_expr(*expr, builder, variables, index),
         Expr::Return(None, _) => (),
-        Expr::Loop(expr, _) => declare_variables_in_expr(*expr, builder, variables, index),
+        Expr::Loop(expr, _) => {
+            let zero = builder.ins().iconst(types::I64, 0);
+            let return_variable =
+                declare_variable(types::I64, builder, variables, index, "loop_cond");
+            builder.def_var(return_variable, zero);
+            declare_variables_in_expr(*expr, builder, variables, index)
+        }
         Expr::Let(name, expr, _) => {
             declare_variable(types::F64, builder, variables, index, &name);
             declare_variables_in_expr(*expr, builder, variables, index)
