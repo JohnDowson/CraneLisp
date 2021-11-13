@@ -189,7 +189,7 @@ pub fn eval(expr: Expr, env: &mut Env, jit: &mut Jit) -> Result<Value> {
                     env.insert(sym, v);
                     return Value::None.okay();
                 }
-                expr @ Expr::Return(..) => return eval(expr, env, jit),
+                expr @ Expr::Break(..) => return eval(expr, env, jit),
                 expr @ Expr::Loop(..) => return eval(expr, env, jit),
                 e => todo!("Error: unquoted list that isn't application\n{:#?}", e),
             }
@@ -226,7 +226,7 @@ pub fn eval(expr: Expr, env: &mut Env, jit: &mut Jit) -> Result<Value> {
                 eval(*lie, env, jit)
             }
         }
-        Expr::Return(expr, ..) => {
+        Expr::Break(expr, ..) => {
             if let Some(expr) = expr {
                 Value::Return(Box::new(eval(*expr, env, jit)?)).okay()
             } else {

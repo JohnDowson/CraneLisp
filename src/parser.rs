@@ -20,9 +20,9 @@ pub struct Parser {
 }
 
 impl Parser {
-    pub fn new(src: String) -> Result<Self> {
+    pub fn new(lexer: Lexer) -> Result<Self> {
         Self {
-            lexer: Lexer::new(src)?,
+            lexer,
             previous_tokens: Vec::new(),
         }
         .okay()
@@ -41,12 +41,12 @@ impl Parser {
             }
 
             Ok(token @ Token::Number(..)) => {
-                let expr = Expr::from_token(&token).unwrap();
+                let expr = Expr::from_token(&token);
                 expr.okay()
             }
 
             Ok(token @ Token::Symbol(..)) => {
-                let expr = Expr::from_token(&token).unwrap();
+                let expr = Expr::from_token(&token);
                 expr.okay()
             }
 
@@ -112,13 +112,13 @@ impl Parser {
                         (Expr::List(..)
                         | Expr::Number(..)
                         | Expr::Symbol(..)
-                        | Expr::Return(..)),
+                        | Expr::Break(..)),
                         lie
                         @
                         (Expr::List(..)
                         | Expr::Number(..)
                         | Expr::Symbol(..)
-                        | Expr::Return(..)),
+                        | Expr::Break(..)),
                     ) => {
                         let span = token.span_start()..lie.span().end;
                         Expr::If(
@@ -137,7 +137,7 @@ impl Parser {
                 if self.lexer.peek_token()?.is_valued() {
                     value = Box::new(self.parse_expr()?).some()
                 }
-                Expr::Return(value, Meta { span: token.span() }).okay()
+                Expr::Break(value, Meta { span: token.span() }).okay()
             }
             Ok(token @ Token::Let(..)) => match (self.lexer.next_token()?, self.parse_expr()?) {
                 (sym @ Token::Symbol(_, _), expr) if expr.is_valued() => Expr::Let(

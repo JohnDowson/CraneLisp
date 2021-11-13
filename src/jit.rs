@@ -18,10 +18,11 @@ pub struct Jit {
 }
 
 macro_rules! defsym {
+    // Named
     ($builder:expr; $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
     };
-    ($builder:expr; $fun_lookup:expr; $sym:expr => $fun:path) => {
+    ($builder:expr; $fun_lookup:expr; BINARY $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
         $fun_lookup.insert(
             std::stringify!($fun).into(),
@@ -34,12 +35,36 @@ macro_rules! defsym {
                 .unwrap(),
         );
     };
-    ($builder:expr; $sym:expr => $fun:expr) => {
-        $builder.symbol($sym, $fun as fn(f64, f64) -> f64 as *const u8);
+    ($builder:expr; $fun_lookup:expr; VARARG $sym:expr => $fun:path) => {
+        $builder.symbol($sym, $fun as *const u8);
+        $fun_lookup.insert(
+            std::stringify!($fun).into(),
+            crate::function::Signature::build()
+                .set_name(std::stringify!($fun).into())
+                .set_foldable(true)
+                .set_ret(crate::function::Type::Number)
+                .finish()
+                .unwrap(),
+        );
     };
-
-    ($builder:expr; $fun_lookup:expr; $sym:expr => $fun:expr) => {
-        $builder.symbol($sym, $fun as fn(f64, f64) -> f64 as *const u8);
+    ($builder:expr; $fun_lookup:expr; UNARY $sym:expr => $fun:path) => {
+        $builder.symbol($sym, $fun as *const u8);
+        $fun_lookup.insert(
+            std::stringify!($fun).into(),
+            crate::function::Signature::build()
+                .set_name(std::stringify!($fun).into())
+                .push_arg(("a".into(), crate::function::Type::Number))
+                .set_ret(crate::function::Type::Number)
+                .finish()
+                .unwrap(),
+        );
+    };
+    // Autoname
+    ($builder:expr; $fun:path) => {
+        $builder.symbol(std::stringify!($fun), $fun as *const u8);
+    };
+    ($builder:expr; $fun_lookup:expr; BINARY $fun:path) => {
+        $builder.symbol(std::stringify!($fun), $fun as *const u8);
         $fun_lookup.insert(
             std::stringify!($fun).into(),
             crate::function::Signature::build()
@@ -51,17 +76,25 @@ macro_rules! defsym {
                 .unwrap(),
         );
     };
-    ($builder:expr; $fun:path) => {
+    ($builder:expr; $fun_lookup:expr; VARARG $fun:path) => {
         $builder.symbol(std::stringify!($fun), $fun as *const u8);
+        $fun_lookup.insert(
+            std::stringify!($fun).into(),
+            crate::function::Signature::build()
+                .set_name(std::stringify!($fun).into())
+                .set_foldable(true)
+                .set_ret(crate::function::Type::Number)
+                .finish()
+                .unwrap(),
+        );
     };
-    ($builder:expr; $fun_lookup:expr; $fun:path) => {
+    ($builder:expr; $fun_lookup:expr; UNARY $fun:path) => {
         $builder.symbol(std::stringify!($fun), $fun as *const u8);
         $fun_lookup.insert(
             std::stringify!($fun).into(),
             crate::function::Signature::build()
                 .set_name(std::stringify!($fun).into())
                 .push_arg(("a".into(), crate::function::Type::Number))
-                .push_arg(("b".into(), crate::function::Type::Number))
                 .set_ret(crate::function::Type::Number)
                 .finish()
                 .unwrap(),
@@ -73,12 +106,11 @@ impl Default for Jit {
     fn default() -> Self {
         let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
         let mut fun_lookup = FnvHashMap::default();
-        defsym!(builder; fun_lookup; cl_print);
-        defsym!(builder; fun_lookup; "+" => plus);
-        defsym!(builder; fun_lookup; "-" => minus);
-        defsym!(builder; fun_lookup; "<" => less_than);
-        defsym!(builder; fun_lookup; ">" => more_than);
-        defsym!(builder; fun_lookup; "foo" => |a, b| a + b);
+        defsym!(builder; fun_lookup; UNARY cl_print);
+        defsym!(builder; fun_lookup; VARARG "+" => plus);
+        defsym!(builder; fun_lookup; VARARG "-" => minus);
+        defsym!(builder; fun_lookup; BINARY "<" => less_than);
+        defsym!(builder; fun_lookup; BINARY ">" => more_than);
         let module = JITModule::new(builder);
         Self {
             builder_ctx: FunctionBuilderContext::new(),
@@ -201,7 +233,7 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
             Expr::Quoted(_, _) => todo!("dunno"),
             Expr::Defun(_, _, _, _, _) => todo!("dunno"),
             Expr::If(cond, truth, lie, _) => self.translate_if(*cond, *truth, *lie),
-            Expr::Return(_, _) => todo!("Why did i call break return? Its confusing af"),
+            Expr::Break(_, _) => todo!("Why did i call break return? Its confusing af"),
             Expr::Loop(_, _) => todo!(),
             Expr::Let(name, expr, _) => self.translate_let(name, *expr),
         }
@@ -333,8 +365,8 @@ fn declare_variables_in_expr(
                 declare_variables_in_expr(expr, builder, variables, index)
             }
         }
-        Expr::Return(Some(expr), _) => declare_variables_in_expr(*expr, builder, variables, index),
-        Expr::Return(None, _) => (),
+        Expr::Break(Some(expr), _) => declare_variables_in_expr(*expr, builder, variables, index),
+        Expr::Break(None, _) => (),
         Expr::Loop(expr, _) => {
             let zero = builder.ins().iconst(types::I64, 0);
             let return_variable =

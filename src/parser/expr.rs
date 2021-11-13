@@ -9,7 +9,7 @@ pub enum Expr {
     Quoted(Box<Expr>, Meta),
     Defun(String, FnArgs, Box<Expr>, Type, Meta),
     If(Box<Expr>, Box<Expr>, Box<Expr>, Meta),
-    Return(Option<Box<Expr>>, Meta),
+    Break(Option<Box<Expr>>, Meta),
     Loop(Box<Expr>, Meta),
     Let(String, Box<Expr>, Meta),
 }
@@ -43,9 +43,7 @@ impl Debug for Expr {
                     .field(arg2)
                     .field(arg3)
                     .finish(),
-                Self::Return(arg0, arg1) => {
-                    f.debug_tuple("Return").field(arg0).field(arg1).finish()
-                }
+                Self::Break(arg0, arg1) => f.debug_tuple("Return").field(arg0).field(arg1).finish(),
                 Self::Loop(arg0, arg1) => f.debug_tuple("Loop").field(arg0).field(arg1).finish(),
                 Self::Let(arg0, arg1, arg2) => f
                     .debug_tuple("Let")
@@ -72,7 +70,7 @@ impl Debug for Expr {
                     .field(arg1)
                     .field(arg2)
                     .finish(),
-                Self::Return(arg0, ..) => f.debug_tuple("Return").field(arg0).finish(),
+                Self::Break(arg0, ..) => f.debug_tuple("Return").field(arg0).finish(),
                 Self::Loop(arg0, ..) => f.debug_tuple("Loop").field(arg0).finish(),
                 Self::Let(arg0, arg1, ..) => f.debug_tuple("Let").field(arg0).field(arg1).finish(),
             }
@@ -89,7 +87,7 @@ impl Expr {
             Expr::Quoted(_, m) => m,
             Expr::Defun(.., m) => m,
             Expr::If(_, _, _, m) => m,
-            Expr::Return(_, m) => m,
+            Expr::Break(_, m) => m,
             Expr::Loop(_, m) => m,
             Expr::Let(_, _, m) => m,
         }
@@ -104,7 +102,7 @@ impl Expr {
             Expr::Quoted(_, m) => m,
             Expr::Defun(.., m) => m,
             Expr::If(_, _, _, m) => m,
-            Expr::Return(_, m) => m,
+            Expr::Break(_, m) => m,
             Expr::Loop(_, m) => m,
             Expr::Let(_, _, m) => m,
         }
@@ -120,7 +118,7 @@ impl Expr {
             Expr::Quoted(_, _) => todo!(),
             Expr::Defun(_, _, _, _, _) => false,
             Expr::If(_, _, _, _) => true,
-            Expr::Return(_, _) => todo!(),
+            Expr::Break(_, _) => todo!(),
             Expr::Loop(_, _) => todo!(),
             Expr::Let(..) => false,
         }
@@ -133,11 +131,11 @@ impl Expr {
         }
     }
 
-    pub fn from_token(token: &Token) -> Result<Self, ()> {
+    pub fn from_token(token: &Token) -> Self {
         match token {
-            Token::Number(val, span) => Ok(Expr::Number(*val, Meta { span: span.clone() })),
-            Token::Symbol(val, span) => Ok(Expr::Symbol(val.clone(), Meta { span: span.clone() })),
-            _ => Err(()),
+            Token::Number(val, span) => Expr::Number(*val, Meta { span: span.clone() }),
+            Token::Symbol(val, span) => Expr::Symbol(val.clone(), Meta { span: span.clone() }),
+            _ => panic!(),
         }
     }
 
