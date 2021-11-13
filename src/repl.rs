@@ -45,15 +45,16 @@ pub fn repl(time: bool, ast: bool, tt: bool) -> Result<()> {
         if let "q\n" = &*src {
             break;
         }
-
+        let mut lexer = Lexer::new(src.clone(), "repl")?;
         if tt {
-            println!("{:?}", Lexer::new(src.clone())?.collect())
+            println!("{:?}", lexer.collect());
+            lexer.rewind()
         }
 
         let t1 = std::time::Instant::now();
 
         let tree = {
-            let mut parser = Parser::new(src.clone())?;
+            let mut parser = Parser::new(lexer)?;
             parser.parse_expr()
         };
         match tree {
@@ -219,15 +220,15 @@ fn eval_env() -> Env {
 pub fn eval_source(src: String, time: bool, ast: bool, tt: bool) -> Result<()> {
     let mut jit = Jit::default();
     let mut env = eval_env();
-
+    let mut lexer = Lexer::new(src.clone(), "source")?;
     if tt {
-        println!("{:?}", Lexer::new(src.clone())?.collect())
+        println!("{:?}", lexer.collect());
+        lexer.rewind()
     }
-
     let t1 = std::time::Instant::now();
 
     let tree = {
-        let mut parser = Parser::new(src.clone())?;
+        let mut parser = Parser::new(lexer)?;
         parser.parse_expr()
     };
 

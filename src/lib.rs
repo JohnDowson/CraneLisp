@@ -11,7 +11,45 @@ use eval::Value;
 use fnv::FnvHashMap;
 pub type Env = FnvHashMap<String, Value>;
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
-pub type Span = Range<usize>;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+    pub source_id: &'static str,
+}
+impl Span {
+    pub fn new(start: usize, end: usize, source_id: &'static str) -> Self {
+        Self {
+            start,
+            end,
+            source_id,
+        }
+    }
+    pub fn point(point: usize, source_id: &'static str) -> Self {
+        Self {
+            start: point,
+            end: point,
+            source_id,
+        }
+    }
+}
+
+impl ariadne::Span for Span {
+    type SourceId = str;
+
+    fn source(&self) -> &Self::SourceId {
+        self.source_id
+    }
+
+    fn start(&self) -> usize {
+        self.start
+    }
+
+    fn end(&self) -> usize {
+        self.end
+    }
+}
 
 mod libcl {
 

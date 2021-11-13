@@ -1,6 +1,7 @@
 use crate::function::Type;
 use crate::CranelispError;
 use crate::Result;
+use crate::Span;
 use crate::SyntaxError;
 
 use somok::Somok;
@@ -12,15 +13,17 @@ pub use token::Token;
 pub struct Lexer {
     src: Vec<char>,
     _src: *mut str,
+    src_id: &'static str,
     next: usize,
 }
 
 impl Lexer {
-    pub fn new(_src: String) -> Result<Self> {
+    pub fn new(_src: String, src_id: &'static str) -> Result<Self> {
         let _src = Box::leak(_src.into_boxed_str());
         Self {
             src: _src.chars().collect(),
             _src,
+            src_id,
             next: 0,
         }
         .okay()
@@ -119,28 +122,10 @@ impl Lexer {
         )
     }
 
-    fn is_let(&self) -> bool {
-        matches!((self.peekn(1), self.peekn(2)), (Some('e'), Some('t')))
-    }
-
-    fn is_return(&self) -> bool {
-        matches!(
-            (
-                self.peekn(1),
-                self.peekn(2),
-                self.peekn(3),
-                self.peekn(4),
-                self.peekn(5)
-            ),
-            (Some('e'), Some('t'), Some('u'), Some('r'), Some('n'))
-        )
-    }
-
-    fn is_defun(&self) -> bool {
-        matches!(
-            (self.peekn(1), self.peekn(2), self.peekn(3), self.peekn(4),),
-            (Some('e'), Some('f'), Some('u'), Some('n'))
-        )
+    fn is(&self, tok: &str) -> bool {
+        tok.chars()
+            .enumerate()
+            .all(|(i, c)| self.peekn(i) == Some(&c))
     }
 
     pub fn next_token(&mut self) -> Result<Token> {
@@ -149,90 +134,32 @@ impl Lexer {
 
             match char {
                 c if c.is_whitespace() => {
-                    //trace!("Consuming whitespace at location {}", self.next);
                     self.consume();
                     self.next_token()
                 }
-                'l' if self.is_loop() => {
-                    for _ in b"loop" {
-                        self.consume()
-                    }
-                    Token::Loop(self.next - 4..self.next - 1).okay()
-                }
-                'l' if self.is_let() => {
-                    for _ in b"let" {
-                        self.consume()
-                    }
-                    Token::Let(self.next - 3..self.next - 1).okay()
-                }
-                'i' if matches!(self.peekn(1), Some('f')) => {
-                    for _ in b"if" {
-                        self.consume()
-                    }
-                    Token::If(self.next - 2..self.next - 1).okay()
-                }
-                '?' => {
-                    self.consume();
-                    Token::If(self.next - 1..self.next - 1).okay()
-                }
-                'r' if self.is_return() => {
-                    for _ in b"return" {
-                        self.consume()
-                    }
-                    Token::Return(self.next - 6..self.next - 1).okay()
-                }
                 ':' => {
-                    let start = self.next;
-                    self.consume();
-                    let symbol =
-                        self.consume_until(|c| c.is_whitespace() || ['(', ')'].contains(&c));
-                    let end = self.next;
-                    Type::number_from_str(&symbol)
-                        .ok_or(CranelispError::Syntax(SyntaxError::UnknownType(
-                            (start - 1)..end,
-                            symbol,
-                        )))
-                        .map(|ty| Token::Type(ty, start..end))
-                }
-                'd' if self.is_defun() => {
-                    for _ in b"defun" {
-                        self.consume()
-                    }
-                    Token::Defun(self.next - 1).okay()
-                }
-                '|' if matches!(self.peekn(1), Some('>')) => {
-                    for _ in b"|>" {
-                        self.consume()
-                    }
-                    todo!("Token::Lambda")
+                    todo!("Maybe have type separator token")
                 }
                 '"' => {
+                    let start = self.next;
                     self.consume();
                     let string = self.consume_until(|c| c == '"');
-                    Token::String(string, 0..0).okay()
+                    let end = self.next;
+                    Token::string(Span::new(start, end, self.src_id), string).okay()
                 }
                 '(' => {
                     //trace!("Consuming LParen at location {}", self.next);
                     self.consume();
-                    Token::LParen(self.next - 1).okay()
+                    Token::lparen(Span::point(self.next - 1, self.src_id)).okay()
                 }
                 ')' => {
                     //trace!("Consuming RParen at location {}", self.next);
                     self.consume();
-                    Token::RParen(self.next - 1).okay()
+                    Token::rparen(Span::point(self.next - 1, self.src_id)).okay()
                 }
                 c if c.is_numeric() || c == &'.' => self.consume_number(),
                 '-' if matches!(self.peekn(1), Some(c) if c.is_numeric()) => {
                     self.consume_negative_number()
-                }
-                '#' => {
-                    //trace!("Consuming Comment at location {}", self.next);
-                    self.consume();
-                    let _ = self.consume_until(|c| c == '\n' || c == '#');
-                    if matches!(self.peek(), Some('#')) {
-                        self.consume()
-                    };
-                    self.next_token()
                 }
                 c if !c.is_numeric() && !c.is_whitespace() => self.consume_symbol(),
 
@@ -280,7 +207,7 @@ impl Lexer {
         self.next += 1
     }
 
-    pub fn collect(mut self) -> Vec<Token> {
+    pub fn collect(&mut self) -> Vec<Token> {
         let mut tt = Vec::new();
         while let Ok(t) = self.next_token() {
             if matches!(t, Token::Eof(..)) {
@@ -290,6 +217,9 @@ impl Lexer {
             tt.push(t);
         }
         tt
+    }
+    pub fn rewind(&mut self) {
+        self.next = 0;
     }
 }
 
