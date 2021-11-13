@@ -14,7 +14,6 @@ pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
 pub type Span = Range<usize>;
 
 mod libcl {
-    use crate::eval::Value;
 
     #[no_mangle]
     #[export_name = "print"]
