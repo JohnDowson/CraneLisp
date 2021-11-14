@@ -1,5 +1,5 @@
 use super::FnArgs;
-use crate::{function::Type, lexer::Token, Span};
+use crate::Span;
 use std::fmt::Debug;
 #[derive(Clone)]
 pub enum Expr {
@@ -7,7 +7,7 @@ pub enum Expr {
     Number(f64, Meta),
     List(Vec<Expr>, Meta),
     Quoted(Box<Expr>, Meta),
-    Defun(String, FnArgs, Box<Expr>, Type, Meta),
+    Defun(String, FnArgs, Box<Expr>, (), Meta),
     If(Box<Expr>, Box<Expr>, Box<Expr>, Meta),
     Break(Option<Box<Expr>>, Meta),
     Loop(Box<Expr>, Meta),
@@ -107,7 +107,6 @@ impl Expr {
             Expr::Let(_, _, m) => m,
         }
         .span
-        .clone()
     }
 
     pub fn is_valued(&self) -> bool {
@@ -128,14 +127,6 @@ impl Expr {
         match self {
             Expr::Number(n, _) => n,
             _ => unreachable!(),
-        }
-    }
-
-    pub fn from_token(token: &Token) -> Self {
-        match token {
-            Token::Number(val, span) => Expr::Number(*val, Meta { span: span.clone() }),
-            Token::Symbol(val, span) => Expr::Symbol(val.clone(), Meta { span: span.clone() }),
-            _ => panic!(),
         }
     }
 
@@ -176,7 +167,7 @@ impl Expr {
     }
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Meta {
     pub span: Span,
 }

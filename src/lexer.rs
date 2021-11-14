@@ -1,8 +1,5 @@
-use crate::function::Type;
-use crate::CranelispError;
 use crate::Result;
 use crate::Span;
-use crate::SyntaxError;
 
 use somok::Somok;
 use std::fmt::Debug;
@@ -32,9 +29,15 @@ impl Lexer {
     fn consume_negative_number(&mut self) -> Result<Token> {
         let start = self.next;
         self.consume();
-        match self.consume_number()? {
-            Token::Number(n, span) => Token::Number(-n, start..span.end).okay(),
-            _ => unreachable!(),
+        let number = self.consume_number()?;
+        if number.is_float() {
+            Token::integer(
+                Span::new(start, number.span.end),
+                -number.extract_integer()?,
+            )
+            .okay()
+        } else {
+            todo!()
         }
     }
 
@@ -55,10 +58,10 @@ impl Lexer {
                         self.consume();
                         if let Some(c) = self.peek() {
                             if !c.is_numeric() && c != &')' && !c.is_whitespace() {
-                                return CranelispError::Syntax(SyntaxError::InvalidLiteral(
-                                    start..self.next,
-                                    format!(" {:?}", c),
-                                ))
+                                return syntax!(
+                                    InvalidLiteral,
+                                    (Span::new(start, self.next), "".to_string())
+                                )
                                 .error();
                             }
                         }
@@ -67,31 +70,31 @@ impl Lexer {
                     Some(c) if c.is_whitespace() || c == &')' => {}
                     Some(c) => {
                         eprintln!("invalid literal{:?}", c.is_whitespace());
-                        return CranelispError::Syntax(SyntaxError::InvalidLiteral(
-                            start..self.next,
-                            format!(" {:?}", c),
-                        ))
-                        .error();
+                        return syntax!(InvalidLiteral, (Span::new(start, self.next), "".into()))
+                            .error();
                     }
                     None => (),
                 }
                 number = [integer, decimal].join(".")
             }
-            Some(c) => {
-                return CranelispError::Syntax(SyntaxError::InvalidLiteral(
-                    start..self.next,
-                    format!(" {:?}", c),
-                ))
+            Some(_) => {
+                return syntax!(
+                    InvalidLiteral,
+                    (
+                        Span::point(self.next),
+                        "Invalid numeric literal here".to_string()
+                    )
+                )
                 .error();
             }
             None => (),
         }
         let end = self.next;
-        Token::Number(
-            number.parse().map_err(|_| {
-                CranelispError::Syntax(SyntaxError::InvalidLiteral(start..end, number))
-            })?,
-            start..end,
+        Token::integer(
+            Span::new(start, self.next),
+            number
+                .parse::<i64>()
+                .map_err(|_| syntax!(InvalidLiteral, (Span::new(start, end), "".to_string())))?,
         )
         .okay()
     }
@@ -105,7 +108,7 @@ impl Lexer {
         //     symbol,
         //     start..end
         // );
-        Ok(Token::Symbol(symbol, start..end))
+        Ok(Token::symbol(Span::new(start, end), symbol))
     }
 
     pub fn peek_token(&mut self) -> Result<Token> {
@@ -115,47 +118,36 @@ impl Lexer {
         token
     }
 
-    fn is_loop(&self) -> bool {
-        matches!(
-            (self.peekn(1), self.peekn(2), self.peekn(3)),
-            (Some('o'), Some('o'), Some('p'))
-        )
-    }
-
-    fn is(&self, tok: &str) -> bool {
-        tok.chars()
-            .enumerate()
-            .all(|(i, c)| self.peekn(i) == Some(&c))
-    }
-
     pub fn next_token(&mut self) -> Result<Token> {
         if let Some(char) = self.peek() {
-            // trace!("{:?}", &*self);
-
             match char {
                 c if c.is_whitespace() => {
-                    self.consume();
-                    self.next_token()
+                    let start = self.next;
+                    self.consume_until(|c| !c.is_whitespace());
+                    let end = self.next - 1;
+                    Token::whitespace(Span::new(start, end)).okay()
                 }
                 ':' => {
-                    todo!("Maybe have type separator token")
+                    self.consume();
+                    Token::type_separator(Span::point(self.next - 1)).okay()
                 }
                 '"' => {
                     let start = self.next;
                     self.consume();
                     let string = self.consume_until(|c| c == '"');
                     let end = self.next;
-                    Token::string(Span::new(start, end, self.src_id), string).okay()
+                    self.consume();
+                    Token::string(Span::new(start, end), string).okay()
                 }
                 '(' => {
                     //trace!("Consuming LParen at location {}", self.next);
                     self.consume();
-                    Token::lparen(Span::point(self.next - 1, self.src_id)).okay()
+                    Token::lparen(Span::point(self.next - 1)).okay()
                 }
                 ')' => {
                     //trace!("Consuming RParen at location {}", self.next);
                     self.consume();
-                    Token::rparen(Span::point(self.next - 1, self.src_id)).okay()
+                    Token::rparen(Span::point(self.next - 1)).okay()
                 }
                 c if c.is_numeric() || c == &'.' => self.consume_number(),
                 '-' if matches!(self.peekn(1), Some(c) if c.is_numeric()) => {
@@ -166,16 +158,16 @@ impl Lexer {
                 '\'' => {
                     //trace!("Consuming Quote at location {}", self.next);
                     self.consume();
-                    Token::Quote(self.next - 1).okay()
+                    Token::quote(Span::point(self.next - 1)).okay()
                 }
-                c => CranelispError::Syntax(SyntaxError::UnexpectedCharacter(
-                    self.next..self.next,
-                    *c,
-                ))
+                c => syntax!(
+                    UnexpectedCharacter,
+                    (Span::point(self.next), format!("{:?}", c))
+                )
                 .error(),
             }
         } else {
-            Token::Eof(self.next).okay()
+            Token::eof(Span::point(self.next)).okay()
         }
     }
 
@@ -210,7 +202,7 @@ impl Lexer {
     pub fn collect(&mut self) -> Vec<Token> {
         let mut tt = Vec::new();
         while let Ok(t) = self.next_token() {
-            if matches!(t, Token::Eof(..)) {
+            if t.is_eof() {
                 tt.push(t);
                 break;
             }

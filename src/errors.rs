@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::fmt::Display;
 
 use somok::Somok;
@@ -43,51 +44,27 @@ pub enum EvalError {
 }
 
 #[derive(Debug)]
-pub enum SyntaxError {
-    UnmatchedParen(Span, Span),
-    UnexpectedCharacter(Span, char),
-    InvalidLiteral(Span, String),
-    UnexpectedToken(Span, String),
-
-    FunctionHasNoBody(Span, Span),
-    FunctionHasNoArglist(Span, Span),
-    InvalidDefun(Span, Span, Span),
-
-    MissingType(Span),
-    UnknownType(Span, String),
+pub struct SyntaxError {
+    pub kind: SyntaxErrorKind,
+    pub spans: Vec<(Span, String)>,
 }
-impl SyntaxError {
-    pub fn spans(&self) -> Vec<Span> {
-        match self {
-            SyntaxError::UnmatchedParen(a, b, ..) => vec![a.clone(), b.clone()],
-            SyntaxError::UnexpectedCharacter(a, ..) => vec![a.clone()],
-            SyntaxError::InvalidLiteral(a, ..) => vec![a.clone()],
-            SyntaxError::UnexpectedToken(a, ..) => vec![a.clone()],
 
-            SyntaxError::FunctionHasNoBody(a, b) => vec![a.clone(), b.clone()],
-            SyntaxError::FunctionHasNoArglist(a, b) => vec![a.clone(), b.clone()],
-            SyntaxError::InvalidDefun(a, b, c) => vec![a.clone(), b.clone(), c.clone()],
+#[derive(Debug)]
+pub enum SyntaxErrorKind {
+    UnmatchedParen,
+    UnexpectedCharacter,
+    InvalidLiteral,
+    UnexpectedToken,
 
-            SyntaxError::MissingType(b) => vec![b.clone()],
-            SyntaxError::UnknownType(a, ..) => vec![a.clone()],
-        }
-    }
+    FunctionHasNoBody,
+    FunctionHasNoArglist,
+    InvalidDefun,
+
+    MissingType,
+    UnknownType,
 }
 impl Display for SyntaxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let msg = match self {
-            SyntaxError::UnmatchedParen(_, _) => "Unmatched paren".into(),
-            SyntaxError::UnexpectedCharacter(_, c) => format!("Unexpected character {}", c),
-            SyntaxError::InvalidLiteral(_, s) => format!("Invalid numeric literal {}", s),
-            SyntaxError::UnexpectedToken(_, s) => format!("Unexpected token {}", s),
-
-            SyntaxError::FunctionHasNoBody(_, _) => "Functions must have body".to_string(),
-            SyntaxError::FunctionHasNoArglist(_, _) => "Functions must have arglist".to_string(),
-            SyntaxError::InvalidDefun(..) => "Functions must have arglist and body".to_string(),
-
-            SyntaxError::MissingType(..) => "Expected type".to_string(),
-            SyntaxError::UnknownType(_, s) => format!("Unknown type {}", s),
-        };
-        write!(f, "{}", msg)
+        <Self as Debug>::fmt(self, f)
     }
 }
