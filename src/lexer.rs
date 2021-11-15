@@ -43,18 +43,25 @@ impl Lexer {
 
     fn consume_number(&mut self) -> Result<Token> {
         let start = self.next;
+        let mut fp = false;
         let mut number = String::new();
         match self.peek() {
             Some('.') => {
                 self.consume();
                 number.push('.');
                 number.push_str(&self.consume_until(|c| !c.is_numeric()));
+                let end = self.next - 1;
+                let num = number
+                    .parse::<f64>()
+                    .map_err(|e| syntax!(InvalidLiteral, (Span::new(start, end), e.to_string())))?;
+                return Token::float(Span::new(start, end), num).okay();
             }
             Some(c) if c.is_numeric() => {
                 let integer = self.consume_until(|c| !c.is_numeric());
                 let mut decimal = String::new();
                 match self.peek() {
                     Some('.') => {
+                        fp = true;
                         self.consume();
                         if let Some(c) = self.peek() {
                             if !c.is_numeric() && c != &')' && !c.is_whitespace() {
@@ -70,12 +77,28 @@ impl Lexer {
                     Some(c) if c.is_whitespace() || c == &')' => {}
                     Some(c) => {
                         eprintln!("invalid literal{:?}", c.is_whitespace());
-                        return syntax!(InvalidLiteral, (Span::new(start, self.next), "".into()))
-                            .error();
+                        return syntax!(
+                            InvalidLiteral,
+                            (
+                                Span::new(start, self.next),
+                                "Invalid decimal part here".into()
+                            )
+                        )
+                        .error();
                     }
                     None => (),
                 }
-                number = [integer, decimal].join(".")
+                if fp {
+                    number = [integer, decimal].join(".")
+                } else {
+                    return Token::integer(
+                        Span::new(start, self.next),
+                        integer.parse::<i64>().map_err(|e| {
+                            syntax!(InvalidLiteral, (Span::new(start, self.next), e.to_string()))
+                        })?,
+                    )
+                    .okay();
+                }
             }
             Some(_) => {
                 return syntax!(
@@ -90,11 +113,11 @@ impl Lexer {
             None => (),
         }
         let end = self.next;
-        Token::integer(
+        Token::float(
             Span::new(start, self.next),
             number
-                .parse::<i64>()
-                .map_err(|_| syntax!(InvalidLiteral, (Span::new(start, end), "".to_string())))?,
+                .parse::<f64>()
+                .map_err(|e| syntax!(InvalidLiteral, (Span::new(start, end), e.to_string())))?,
         )
         .okay()
     }

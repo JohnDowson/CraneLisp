@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use cranelisp::jit::Jit;
+use fnv::FnvHashMap;
 use rustyline::{
     validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
     Config, EditMode,
@@ -19,7 +21,12 @@ impl Validator for InputValidator {
     }
 }
 
-pub fn repl(time: bool, ast: bool, tt: bool) -> Result<()> {
+pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
+    let mut env = FnvHashMap::default();
+
+    let mut jit = Jit::default();
+    jit.show_clir = clir;
+
     let h = InputValidator {
         brackets: MatchingBracketValidator::new(),
     };
@@ -45,7 +52,7 @@ pub fn repl(time: bool, ast: bool, tt: bool) -> Result<()> {
             }
         };
         if tt {
-            println!("{:#?}", lexer.collect());
+            println!("{:?}", lexer.collect());
             lexer.rewind()
         }
         let t2 = Instant::now();
@@ -61,9 +68,17 @@ pub fn repl(time: bool, ast: bool, tt: bool) -> Result<()> {
             println!("{:#?}", tree);
         }
 
+        let evaluated = match crate::eval::eval(tree, &mut env, &mut jit) {
+            Ok(v) => v,
+            Err(e) => {
+                provide_diagnostic(e, src);
+                continue;
+            }
+        };
         if time {
             println!("{:?}", t2 - t1);
         }
+        println!("{:?}", evaluated);
     }
     Ok(())
 }

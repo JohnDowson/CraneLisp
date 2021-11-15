@@ -12,9 +12,6 @@ pub struct Token {
 
 impl Debug for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // if f.alternate() {
-        //     write!(f, "Token::")?
-        // }
         write!(f, "{:?}", self.kind)?;
         if matches!(self.data, TokenData::None) {
             ().okay()
@@ -95,7 +92,8 @@ impl Token {
     }
 
     pub fn string(span: Span, str: impl Into<String>) -> Self {
-        Self::new(span, TokenKind::String, TokenData::String(str.into()))
+        let str = str.into().replace("\\n", "\n");
+        Self::new(span, TokenKind::String, TokenData::String(str))
     }
     pub fn is_string(&self) -> bool {
         matches!(self.kind, TokenKind::String)
@@ -157,7 +155,6 @@ impl Debug for TokenData {
     }
 }
 
-#[derive(Debug)]
 pub enum TokenKind {
     LParen,
     RParen,
@@ -169,4 +166,21 @@ pub enum TokenKind {
     TypeSeparator,
     Eof,
     Whitespace,
+}
+
+impl Debug for TokenKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LParen => write!(f, "("),
+            Self::RParen => write!(f, ")"),
+            Self::Float => write!(f, "F"),
+            Self::Integer => write!(f, "I"),
+            Self::Symbol => write!(f, "S"),
+            Self::String => write!(f, "Str"),
+            Self::Quote => write!(f, "'"),
+            Self::TypeSeparator => write!(f, ":"),
+            Self::Eof => write!(f, "Eof"),
+            Self::Whitespace => write!(f, "WS"),
+        }
+    }
 }

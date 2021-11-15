@@ -15,6 +15,7 @@ pub struct Jit {
     // data_ctx: DataContext,
     module: JITModule,
     fun_lookup: FnvHashMap<String, crate::function::Signature>,
+    pub show_clir: bool,
 }
 
 macro_rules! defsym {
@@ -25,12 +26,12 @@ macro_rules! defsym {
     ($builder:expr; $fun_lookup:expr; BINARY $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
         $fun_lookup.insert(
-            std::stringify!($fun).into(),
+            $sym.into(),
             crate::function::Signature::build()
-                .set_name(std::stringify!($fun).into())
-                .push_arg(("a".into(), crate::function::Type::Number))
-                .push_arg(("b".into(), crate::function::Type::Number))
-                .set_ret(crate::function::Type::Number)
+                .set_name(std::stringify!($sym).into())
+                .push_arg(("a".into(), crate::function::Type::Float))
+                .push_arg(("b".into(), crate::function::Type::Float))
+                .set_ret(crate::function::Type::Float)
                 .finish()
                 .unwrap(),
         );
@@ -38,11 +39,11 @@ macro_rules! defsym {
     ($builder:expr; $fun_lookup:expr; VARARG $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
         $fun_lookup.insert(
-            std::stringify!($fun).into(),
+            $sym.into(),
             crate::function::Signature::build()
-                .set_name(std::stringify!($fun).into())
-                .set_foldable(true)
-                .set_ret(crate::function::Type::Number)
+                .set_name(std::stringify!($sym).into())
+                .set_foldable(crate::function::Type::Float)
+                .set_ret(crate::function::Type::Float)
                 .finish()
                 .unwrap(),
         );
@@ -50,10 +51,10 @@ macro_rules! defsym {
     ($builder:expr; $fun_lookup:expr; UNARY $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
         $fun_lookup.insert(
-            std::stringify!($fun).into(),
+            $sym.into(),
             crate::function::Signature::build()
-                .set_name(std::stringify!($fun).into())
-                .push_arg(("a".into(), crate::function::Type::Number))
+                .set_name(std::stringify!($sym).into())
+                .push_arg(("a".into(), crate::function::Type::Float))
                 .set_ret(crate::function::Type::Number)
                 .finish()
                 .unwrap(),
@@ -94,8 +95,8 @@ macro_rules! defsym {
             std::stringify!($fun).into(),
             crate::function::Signature::build()
                 .set_name(std::stringify!($fun).into())
-                .push_arg(("a".into(), crate::function::Type::Number))
-                .set_ret(crate::function::Type::Number)
+                .push_arg(("a".into(), crate::function::Type::Float))
+                .set_ret(crate::function::Type::Float)
                 .finish()
                 .unwrap(),
         );
@@ -118,6 +119,7 @@ impl Default for Jit {
             //  data_ctx: DataContext::new(),
             module,
             fun_lookup,
+            show_clir: false,
         }
     }
 }
@@ -194,7 +196,9 @@ impl Jit {
         trans.builder.ins().return_(&[return_value]);
         trans.builder.finalize();
 
-        println!("{}", trans.builder.func.display());
+        if self.show_clir {
+            println!("{}", trans.builder.func.display());
+        }
 
         Ok(())
     }
@@ -214,7 +218,7 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
                 let var = self.variables.get(&n).expect("Undefined variable");
                 self.builder.use_var(*var)
             }
-            Expr::Number(n, _) => self.builder.ins().f64const(n),
+            Expr::Float(n, _) => self.builder.ins().f64const(n),
             Expr::List(mut exprs, _) if matches!(exprs.first(), Some(Expr::Symbol(..))) => {
                 if let Expr::Symbol(name, ..) = exprs.remove(0) {
                     self.translate_call(name, exprs)
@@ -236,6 +240,7 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
             Expr::Break(_, _) => todo!("Why did i call break return? Its confusing af"),
             Expr::Loop(_, _) => todo!(),
             Expr::Let(name, expr, _) => self.translate_let(name, *expr),
+            _ => todo!(),
         }
     }
 
@@ -245,17 +250,14 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
 
     fn translate_call(&mut self, name: String, exprs: Vec<Expr>) -> Value {
         // TODO this should be an ERROR!
-        let signature = self
-            .fun_lookup
-            .get(dbg! {&name})
-            .expect("Undefined function");
+        let signature = self.fun_lookup.get(&name).expect("Undefined function");
 
         let mut sig = self.module.make_signature();
-        if signature.foldable {
+        if signature.foldable() {
             sig.params.push(AbiParam::new(types::F64));
             sig.params.push(AbiParam::new(types::F64));
         } else {
-            for _arg in &signature.args {
+            for _arg in &signature.args() {
                 sig.params.push(AbiParam::new(types::F64));
             }
         }
@@ -352,7 +354,7 @@ fn declare_variables_in_expr(
 ) {
     match expr {
         Expr::Symbol(_, _) => (),
-        Expr::Number(_, _) => (),
+        Expr::Float(_, _) => (),
         Expr::List(exprs, _) => {
             for expr in exprs {
                 declare_variables_in_expr(expr, builder, variables, index)
@@ -378,6 +380,7 @@ fn declare_variables_in_expr(
             declare_variable(types::F64, builder, variables, index, &name);
             declare_variables_in_expr(*expr, builder, variables, index)
         }
+        _ => todo!(),
     }
 }
 

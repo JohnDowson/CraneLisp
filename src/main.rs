@@ -14,6 +14,8 @@ struct Args {
     dump_ast: bool,
     #[clap(short = 'k', long)]
     dump_tokens: bool,
+    #[clap(short = 'c', long)]
+    dump_clir: bool,
     source: Option<String>,
 }
 
@@ -36,7 +38,7 @@ fn main() -> Result<()> {
     //    };
     //eval_source(source, args.time, args.dump_ast, args.dump_tokens)
     //} else {
-    repl::repl(args.time, args.dump_ast, args.dump_tokens)
+    repl::repl(args.time, args.dump_ast, args.dump_tokens, args.dump_clir)
     //}
 }
 
@@ -63,97 +65,34 @@ pub fn provide_diagnostic(error: CranelispError, program: impl Into<ariadne::Sou
     }
 }
 
-// // #[cfg(test)]
-// // mod test {
-// //     use crate::{lexer::Lexer, CranelispError, SyntaxError};
-// //     #[allow(dead_code)]
-// //     fn test_logger() {
-// //         let env = env_logger::Env::default()
-// //             .filter_or("CL_LOG_LEVEL", "trace")
-// //             .write_style_or("CL_LOG_STYLE", "always");
-// //         env_logger::init_from_env(env);
-// //     }
+#[cfg(test)]
+mod test {
+    use crate::{lexer::Lexer, CranelispError};
+    #[test]
+    fn invalid_numeric_literal() {
+        let progs = ["1/1", "2a", "3.b"];
 
-// //     #[test]
-// //     fn valid_numeric_literal() {
-// //         let prog = "1.1 2 .3 4.".into();
-// //         let mut lexer = Lexer::new(prog).unwrap();
-// //         let expected = ["Ok(1.1)", "Ok(2.0)", "Ok(0.3)", "Ok(4.0)"];
-// //         for expected in expected {
-// //             assert_eq!(format!("{:?}", lexer.next_token()), expected)
-// //         }
-// //     }
+        for prog in progs {
+            let mut lexer = Lexer::new(prog.into(), "").unwrap();
+            assert!(matches!(
+                lexer.next_token(),
+                Err(CranelispError::Syntax(..))
+            ))
+        }
+    }
 
-// //     #[test]
-// //     fn invalid_numeric_literal() {
-// //         let progs = ["1/1", "2a", "3.b"];
-
-// //         for prog in progs {
-// //             let mut lexer = Lexer::new(prog.into()).unwrap();
-// //             assert!(matches!(
-// //                 lexer.next_token(),
-// //                 Err(CranelispError::Syntax(SyntaxError::InvalidLiteral(..)))
-// //             ))
-// //         }
-// //     }
-
-// //     #[test]
-// //     fn number_in_list() {
-// //         let prog = "(1.1 2 .3 4.)".into();
-// //         let mut lexer = Lexer::new(prog).unwrap();
-// //         let expected = ["Ok(()", "Ok(1.1)", "Ok(2.0)", "Ok(0.3)", "Ok(4.0)", "Ok())"];
-// //         for expected in expected {
-// //             assert_eq!(format!("{:?}", lexer.next_token()), expected)
-// //         }
-// //         let prog = "(1.1 2 .3 4. )".into();
-// //         let mut lexer = Lexer::new(prog).unwrap();
-// //         let expected = ["Ok(()", "Ok(1.1)", "Ok(2.0)", "Ok(0.3)", "Ok(4.0)", "Ok())"];
-// //         for expected in expected {
-// //             assert_eq!(format!("{:?}", lexer.next_token()), expected)
-// //         }
-// //     }
-
-// //     #[test]
-// //     fn symbol_standalone() {
-// //         let prog = "sym sym2 sym_-bol".into();
-// //         let mut lexer = Lexer::new(prog).unwrap();
-// //         let expected = ["Ok(sym)", "Ok(sym2)", "Ok(sym_-bol)"];
-// //         for expected in expected {
-// //             let token = lexer.next_token();
-// //             assert_eq!(format!("{:?}", token), expected)
-// //         }
-// //     }
-
-// //     #[test]
-// //     fn symbol_in_list() {
-// //         let prog = "(symbol1 symbol2)".into();
-// //         let mut lexer = Lexer::new(prog).unwrap();
-// //         let expected = ["Ok(()", "Ok(symbol1)", "Ok(symbol2)", "Ok())"];
-// //         for expected in expected {
-// //             let token = dbg! {lexer.next_token()};
-// //             assert_eq!(format!("{:?}", token), expected)
-// //         }
-// //     }
-
-// //     #[test]
-// //     fn quote() {
-// //         let prog = "'".into();
-// //         let mut lexer = Lexer::new(prog).unwrap();
-// //         let expected = ["Ok(')"];
-// //         for expected in expected {
-// //             let token = lexer.next_token();
-// //             assert_eq!(format!("{:?}", token), expected)
-// //         }
-// //     }
-
-// //     #[test]
-// //     fn string() {
-// //         let prog = r#""Foobar""#.into();
-// //         let mut lexer = Lexer::new(prog).unwrap();
-// //         let expected = [r#"Ok("Foobar")"#];
-// //         for expected in expected {
-// //             let token = lexer.next_token();
-// //             assert_eq!(format!("{:?}", token), expected)
-// //         }
-// //     }
-// // }
+    #[test]
+    fn number_in_list() {
+        let prog = "(1.1 2 .3 4.)".into();
+        let tokens = Lexer::new(prog, "")
+            .unwrap()
+            .collect()
+            .into_iter()
+            .filter(|t| !t.is_whitespace() && !t.is_eof())
+            .collect::<Vec<_>>();
+        let expected = ["(", "F(1.1)", "I(2)", "F(0.3)", "F(4.0)", ")"];
+        for (i, &expect) in expected.iter().enumerate() {
+            assert_eq!(format!("{:?}", tokens[i]), expect)
+        }
+    }
+}

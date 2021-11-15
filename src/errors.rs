@@ -55,6 +55,7 @@ pub enum SyntaxErrorKind {
     UnexpectedCharacter,
     InvalidLiteral,
     UnexpectedToken,
+    UnexpectedExpression,
 
     FunctionHasNoBody,
     FunctionHasNoArglist,
@@ -63,8 +64,9 @@ pub enum SyntaxErrorKind {
     MissingType,
     UnknownType,
 }
+
 impl Display for SyntaxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        <Self as Debug>::fmt(self, f)
+        write!(f, "SyntaxError::{:?}", &self.kind)
     }
 }

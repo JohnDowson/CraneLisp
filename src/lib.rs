@@ -13,25 +13,26 @@ macro_rules! syntax {
         }
     };
     ($kind:tt) => {
-        {
+        {crate::errors::CranelispError::Syntax(
             crate::errors::SyntaxError {
                 kind: crate::errors::SyntaxErrorKind::$kind,
                 spans: vec![],
-            }
+            })
         }
     };
 }
 
 pub mod errors;
-//pub mod eval;
-//pub mod function;
-//pub mod jit;
+pub mod eval;
+pub mod function;
+pub mod jit;
 pub mod lexer;
 pub mod parser;
+use eval::Value;
 
 pub use errors::*;
-//use fnv::FnvHashMap;
-//pub type Env = FnvHashMap<String, Value>;
+use fnv::FnvHashMap;
+pub type Env = FnvHashMap<String, Value>;
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
 
 #[derive(Clone, Copy)]
