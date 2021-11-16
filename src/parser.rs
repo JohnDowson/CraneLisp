@@ -9,12 +9,12 @@ use crate::function::Type;
 pub use expr::Expr;
 pub type Arglist = Vec<(String, Type)>;
 
-pub struct Parser {
-    lexer: Lexer,
+pub struct Parser<'l> {
+    lexer: &'l mut Lexer,
 }
 
-impl Parser {
-    pub fn new(lexer: Lexer) -> Self {
+impl<'l> Parser<'l> {
+    pub fn new(lexer: &'l mut Lexer) -> Self {
         Self { lexer }
     }
 
@@ -43,6 +43,7 @@ impl Parser {
                             let name = self.eat_symbol()?;
                             self.skip_whitespace()?;
                             self.eat_type_separator()?;
+                            self.skip_whitespace()?;
                             let ty = self.eat_type()?;
                             self.skip_whitespace()?;
                             let args = self.eat_arglist()?;
@@ -65,6 +66,21 @@ impl Parser {
                             let rparen = self.eat_rparen()?;
                             Expr::Loop(Box::new(expr), Span::merge(token.span, rparen.span)).okay()
                         }
+                        "return" => {
+                            self.lexer.next_token()?;
+                            self.skip_whitespace()?;
+                            let rparen = self.eat_rparen()?;
+                            Expr::Return(None, Span::merge(token.span, rparen.span)).okay()
+                        }
+                        "let" => {
+                            self.lexer.next_token()?;
+                            let name = self.eat_symbol()?;
+                            let expr = self.parse_expr()?;
+                            self.skip_whitespace()?;
+                            let rparen = self.eat_rparen()?;
+                            Expr::Let(name, Box::new(expr), Span::merge(token.span, rparen.span))
+                                .okay()
+                        }
                         "if" => {
                             self.lexer.next_token()?;
                             let cond = self.parse_expr()?;
@@ -75,7 +91,7 @@ impl Parser {
 
                             self.skip_whitespace()?;
                             let rparen = self.eat_rparen()?;
-                            match (cond.is_list(), truth.is_list(), lie.is_list()) {
+                            match (true, true, true) {
                                 (true, true, true) => Expr::If(
                                     Box::new(cond),
                                     Box::new(truth),
@@ -95,7 +111,7 @@ impl Parser {
                                     UnexpectedExpression,
                                     (
                                         truth.span(),
-                                        format!("Unexpected {} where List is expected", lie)
+                                        format!("Unexpected {} where List is expected", truth)
                                     )
                                 )
                                 .error(),
@@ -103,7 +119,7 @@ impl Parser {
                                     UnexpectedExpression,
                                     (
                                         truth.span(),
-                                        format!("Unexpected {} where List is expected", lie)
+                                        format!("Unexpected {} where List is expected", truth)
                                     ),
                                     (
                                         lie.span(),
@@ -115,7 +131,7 @@ impl Parser {
                                     UnexpectedExpression,
                                     (
                                         cond.span(),
-                                        format!("Unexpected {} where List is expected", lie)
+                                        format!("Unexpected {} where List is expected", cond)
                                     )
                                 )
                                 .error(),
@@ -123,7 +139,7 @@ impl Parser {
                                     UnexpectedExpression,
                                     (
                                         cond.span(),
-                                        format!("Unexpected {} where List is expected", lie)
+                                        format!("Unexpected {} where List is expected", cond)
                                     ),
                                     (
                                         lie.span(),
@@ -135,11 +151,11 @@ impl Parser {
                                     UnexpectedExpression,
                                     (
                                         cond.span(),
-                                        format!("Unexpected {} where List is expected", lie)
+                                        format!("Unexpected {} where List is expected", cond)
                                     ),
                                     (
                                         truth.span(),
-                                        format!("Unexpected {} where List is expected", lie)
+                                        format!("Unexpected {} where List is expected", truth)
                                     )
                                 )
                                 .error(),
@@ -147,11 +163,11 @@ impl Parser {
                                     UnexpectedExpression,
                                     (
                                         cond.span(),
-                                        format!("Unexpected {} where List is expected", lie)
+                                        format!("Unexpected {} where List is expected", cond)
                                     ),
                                     (
                                         truth.span(),
-                                        format!("Unexpected {} where List is expected", lie)
+                                        format!("Unexpected {} where List is expected", truth)
                                     ),
                                     (
                                         lie.span(),
@@ -165,10 +181,12 @@ impl Parser {
                     },
                     _ => self.parse_list(token),
                 }
-                // return syntax!(UnexpectedToken, (token.span, "Symbol expected here".into()))
-                //     .error();
             }
-            token if token.is_quote() => todo!("Quoted"),
+            token if token.is_quote() => {
+                let expr = self.parse_expr()?;
+                let expr_span = expr.span();
+                Expr::Quoted(Box::new(expr), Span::merge(token.span, expr_span)).okay()
+            }
 
             token if token.is_symbol() => {
                 let expr = Expr::Symbol(token.extract_symbol()?, token.span);
@@ -186,8 +204,7 @@ impl Parser {
             token if token.is_whitespace() => self.parse_expr(),
 
             token if token.is_eof() => CranelispError::EOF.error(),
-            // This should be unreachable
-            what => todo!("{:?}", what),
+            what => panic!("{:?}", what),
         }
     }
 
@@ -223,17 +240,23 @@ impl Parser {
         match self.lexer.next_token()? {
             token if token.is_symbol() => Type::from_str(&token.extract_symbol()?)?.okay(),
             token if token.is_whitespace() => self.eat_type(),
-            token => syntax!(UnexpectedToken, (token.span, "Type expected here".into())).error(),
+            token => syntax!(
+                UnexpectedToken,
+                (token.span, format!("Type expected here, found {:?}", token))
+            )
+            .error(),
         }
     }
 
     fn eat_type_separator(&mut self) -> Result<()> {
         match self.lexer.next_token()? {
             token if token.is_type_separator() => ().okay(),
-            token if token.is_whitespace() => self.eat_type_separator(),
             token => syntax!(
                 UnexpectedToken,
-                (token.span, "Type separator expected here".into())
+                (
+                    token.span,
+                    format!("Type separator expected here, found {:?}", token)
+                )
             )
             .error(),
         }
@@ -254,8 +277,11 @@ impl Parser {
             let symbol = match self.lexer.next_token()? {
                 token if token.is_rparen() => return FnArgs::Arglist(arglist).okay(),
                 token if token.is_symbol() && token.extract_symbol()? == "*" => {
+                    self.skip_whitespace()?;
                     self.eat_type_separator()?;
+                    self.skip_whitespace()?;
                     let ty = self.eat_type()?;
+                    self.skip_whitespace()?;
                     self.eat_rparen()?;
                     return FnArgs::Foldable(ty).okay();
                 }
@@ -267,6 +293,9 @@ impl Parser {
                         .error()
                 }
             };
+            self.skip_whitespace()?;
+            self.eat_type_separator()?;
+            self.skip_whitespace()?;
             let ty = self.eat_type()?;
             arglist.push((symbol, ty));
         }

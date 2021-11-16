@@ -173,14 +173,14 @@ impl Debug for TokenKind {
         match self {
             Self::LParen => write!(f, "("),
             Self::RParen => write!(f, ")"),
-            Self::Float => write!(f, "F"),
-            Self::Integer => write!(f, "I"),
-            Self::Symbol => write!(f, "S"),
+            Self::Float => write!(f, ""),
+            Self::Integer => write!(f, ""),
+            Self::Symbol => write!(f, ""),
             Self::String => write!(f, "Str"),
             Self::Quote => write!(f, "'"),
             Self::TypeSeparator => write!(f, ":"),
             Self::Eof => write!(f, "Eof"),
-            Self::Whitespace => write!(f, "WS"),
+            Self::Whitespace => write!(f, " "),
         }
     }
 }

@@ -68,7 +68,6 @@ impl Function {
         self.sig.arity()
     }
     pub fn call(&self, args: Vec<Value>) -> Result<Value> {
-        eprintln!("TRACE: executing {:?}", self);
         if self.arity() > args.len() && self.arity() != usize::MAX {
             return errors::eval(EvalError::ArityMismatch);
         }

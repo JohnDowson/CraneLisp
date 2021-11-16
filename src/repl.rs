@@ -1,6 +1,11 @@
-use std::time::Instant;
+use std::{fs::File, io::Read, time::Instant};
 
-use cranelisp::jit::Jit;
+use cranelisp::{
+    eval::Value,
+    function::{FnBody, Function, Signature, Type},
+    jit::Jit,
+    Env,
+};
 use fnv::FnvHashMap;
 use rustyline::{
     validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
@@ -8,6 +13,7 @@ use rustyline::{
 };
 use rustyline::{Editor, Result as RLResult};
 use rustyline_derive::{Completer, Helper, Highlighter, Hinter};
+use somok::Somok;
 
 use crate::{lexer::Lexer, parser::Parser, provide_diagnostic, Result};
 #[derive(Completer, Helper, Highlighter, Hinter)]
@@ -21,8 +27,67 @@ impl Validator for InputValidator {
     }
 }
 
-pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
+fn eval_env() -> Env {
     let mut env = FnvHashMap::default();
+    let func = Function::new(
+        Signature::build()
+            .push_arg(("a".into(), Type::Float))
+            .set_name("cl_print".into())
+            .set_ret(Type::Float)
+            .finish()
+            .unwrap(),
+        FnBody::Native(crate::libcl::cl_print as *const u8),
+    );
+    env.insert("cl_print".into(), Value::Func(func));
+
+    let func = Function::new(
+        Signature::build()
+            .set_foldable(Type::Float)
+            .set_name("+".into())
+            .set_ret(Type::Float)
+            .finish()
+            .unwrap(),
+        FnBody::Native(crate::libcl::plus as *const u8),
+    );
+    env.insert("+".into(), Value::Func(func));
+
+    let func = Function::new(
+        Signature::build()
+            .set_foldable(Type::Float)
+            .set_name("-".into())
+            .set_ret(Type::Float)
+            .finish()
+            .unwrap(),
+        FnBody::Native(crate::libcl::minus as *const u8),
+    );
+    env.insert("-".into(), Value::Func(func));
+
+    let func = Function::new(
+        Signature::build()
+            .set_foldable(Type::Float)
+            .set_name("<".into())
+            .set_ret(Type::Float)
+            .finish()
+            .unwrap(),
+        FnBody::Native(crate::libcl::less_than as *const u8),
+    );
+    env.insert("<".into(), Value::Func(func));
+
+    let func = Function::new(
+        Signature::build()
+            .set_foldable(Type::Float)
+            .set_name(">".into())
+            .set_ret(Type::Float)
+            .finish()
+            .unwrap(),
+        FnBody::Native(crate::libcl::more_than as *const u8),
+    );
+    env.insert(">".into(), Value::Func(func));
+    env
+}
+
+pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
+    let mut env = eval_env();
 
     let mut jit = Jit::default();
     jit.show_clir = clir;
@@ -47,7 +112,7 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
         let mut lexer = match Lexer::new(src.clone(), "repl") {
             Ok(l) => l,
             Err(e) => {
-                provide_diagnostic(e, src);
+                provide_diagnostic(&e, src);
                 continue;
             }
         };
@@ -55,12 +120,11 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
             println!("{:?}", lexer.collect());
             lexer.rewind()
         }
-        let t2 = Instant::now();
 
-        let tree = match Parser::new(lexer).parse_expr() {
+        let tree = match Parser::new(&mut lexer).parse_expr() {
             Ok(e) => e,
             Err(e) => {
-                provide_diagnostic(e, src);
+                provide_diagnostic(&e, src);
                 continue;
             }
         };
@@ -71,47 +135,73 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
         let evaluated = match crate::eval::eval(tree, &mut env, &mut jit) {
             Ok(v) => v,
             Err(e) => {
-                provide_diagnostic(e, src);
+                provide_diagnostic(&e, src);
                 continue;
             }
         };
+
+        let t2 = Instant::now();
         if time {
-            println!("{:?}", t2 - t1);
+            println!(": {:?}", t2 - t1);
         }
         println!("{:?}", evaluated);
     }
     Ok(())
 }
 
-// pub fn eval_source(src: String, time: bool, ast: bool, tt: bool) -> Result<()> {
-//     let mut jit = Jit::default();
-//     let mut env = eval_env();
-//     let mut lexer = Lexer::new(src.clone(), "source")?;
-//     if tt {
-//         println!("{:?}", lexer.collect());
-//         lexer.rewind()
-//     }
-//     let t1 = std::time::Instant::now();
+pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
+    let src = {
+        let mut buf = String::new();
+        File::open(prog)?.read_to_string(&mut buf)?;
+        buf
+    };
 
-//     let tree = {
-//         let mut parser = Parser::new(lexer)?;
-//         parser.parse_expr()
-//     };
+    let mut env = eval_env();
 
-//     match tree {
-//         Err(e) => provide_diagnostic(e, src),
-//         Ok(e) => {
-//             if ast {
-//                 println!("{:#?}", &e)
-//             }
-//             let evaluated = eval::eval(e, &mut env, &mut jit);
-//             let t2 = std::time::Instant::now();
-//             println!("{:#?}", evaluated?);
-//             if time {
-//                 println!("Exec time: {:#?}", t2 - t1)
-//             }
-//         }
-//     }
+    let mut jit = Jit::default();
+    jit.show_clir = clir;
 
-//     Ok(())
-// }
+    let t1 = Instant::now();
+    let mut lexer = match Lexer::new(src.clone(), "repl") {
+        Ok(l) => l,
+        Err(e) => {
+            provide_diagnostic(&e, src);
+            return e.error();
+        }
+    };
+    if tt {
+        println!("{:?}", lexer.collect());
+        lexer.rewind()
+    }
+    while !lexer.finished() {
+        let tree = match Parser::new(&mut lexer).parse_expr() {
+            Ok(e) => e,
+            Err(e) => {
+                provide_diagnostic(&e, src);
+                return e.error();
+            }
+        };
+        if ast {
+            println!("{:#?}", tree);
+        }
+
+        let t1 = Instant::now();
+        match crate::eval::eval(tree, &mut env, &mut jit) {
+            Ok(v) => println!(": {:?}", v),
+            Err(e) => {
+                provide_diagnostic(&e, src);
+                return e.error();
+            }
+        };
+        let t2 = Instant::now();
+        if time {
+            println!("exec time {:?}", t2 - t1);
+        }
+    }
+    let t2 = Instant::now();
+    if time {
+        println!("total time {:?}", t2 - t1);
+    }
+
+    Ok(())
+}

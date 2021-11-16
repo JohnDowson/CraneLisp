@@ -46,7 +46,7 @@ pub fn eval(expr: Expr, env: &mut Env, jit: &mut Jit) -> Result<Value> {
                     env.insert(sym, v);
                     return Value::None.okay();
                 }
-                expr @ Expr::Break(..) => return eval(expr, env, jit),
+                expr @ Expr::Return(..) => return eval(expr, env, jit),
                 expr @ Expr::Loop(..) => return eval(expr, env, jit),
                 e => todo!("Error: unquoted list that isn't application\n{:#?}", e),
             }
@@ -71,10 +71,16 @@ pub fn eval(expr: Expr, env: &mut Env, jit: &mut Jit) -> Result<Value> {
                     .finish()?,
             };
             let func = Function::new(sig, FnBody::Virtual(*body)).jit(jit)?;
-            env.insert(name, Value::Func(func.clone()));
+            if name != "_" {
+                env.insert(name, Value::Func(func.clone()));
+            };
             Value::Func(func).okay()
         }
-        Expr::Let(_sym, expr, _) => eval(*expr, env, jit),
+        Expr::Let(sym, expr, _) => {
+            let val = eval(*expr, env, jit)?;
+            env.insert(sym, val.clone());
+            val.okay()
+        }
         Expr::If(cond, truth, lie, _) => {
             let cond = eval(*cond, env, jit)?;
             if cond > Value::Float(0.0) {
@@ -83,7 +89,7 @@ pub fn eval(expr: Expr, env: &mut Env, jit: &mut Jit) -> Result<Value> {
                 eval(*lie, env, jit)
             }
         }
-        Expr::Break(expr, ..) => {
+        Expr::Return(expr, ..) => {
             if let Some(expr) = expr {
                 Value::Return(Box::new(eval(*expr, env, jit)?)).okay()
             } else {

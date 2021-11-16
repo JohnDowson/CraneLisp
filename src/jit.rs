@@ -1,7 +1,7 @@
 use cranelift::codegen::ir::types; //, Function};
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{Linkage, Module}; //DataContext
+use cranelift_module::{Linkage, Module, ModuleError}; //DataContext
 use fnv::FnvHashMap;
 use std::collections::HashMap;
 //use std::slice;
@@ -106,6 +106,7 @@ macro_rules! defsym {
 impl Default for Jit {
     fn default() -> Self {
         let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
+        builder.hotswap(true);
         let mut fun_lookup = FnvHashMap::default();
         defsym!(builder; fun_lookup; UNARY cl_print);
         defsym!(builder; fun_lookup; VARARG "+" => plus);
@@ -132,16 +133,28 @@ impl Jit {
         self.fun_lookup.insert(name.clone(), sig);
         self.translate(fun)?;
 
-        let id = self
-            .module
-            .declare_function(&name, Linkage::Export, &self.ctx.func.signature)?;
+        let id = if name == "_" {
+            self.module
+                .declare_anonymous_function(&self.ctx.func.signature)?
+        } else {
+            self.module
+                .declare_function(&name, Linkage::Export, &self.ctx.func.signature)?
+        };
 
-        self.module.define_function(
+        if let Err(ModuleError::DuplicateDefinition(..)) = self.module.define_function(
             id,
             &mut self.ctx,
             &mut codegen::binemit::NullTrapSink {},
             &mut codegen::binemit::NullStackMapSink {},
-        )?;
+        ) {
+            self.module.prepare_for_function_redefine(id)?;
+            self.module.define_function(
+                id,
+                &mut self.ctx,
+                &mut codegen::binemit::NullTrapSink {},
+                &mut codegen::binemit::NullStackMapSink {},
+            )?;
+        }
 
         self.module.clear_context(&mut self.ctx);
         self.module.finalize_definitions();
@@ -237,15 +250,48 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
             Expr::Quoted(_, _) => todo!("dunno"),
             Expr::Defun(_, _, _, _, _) => todo!("dunno"),
             Expr::If(cond, truth, lie, _) => self.translate_if(*cond, *truth, *lie),
-            Expr::Break(_, _) => todo!("Why did i call break return? Its confusing af"),
-            Expr::Loop(_, _) => todo!(),
+            Expr::Return(_, _) => {
+                let cond_var = *self.variables.get("loop_cond").unwrap();
+                let truth = self.builder.ins().iconst(types::I64, 1);
+                self.builder.def_var(cond_var, truth);
+                self.builder.ins().f64const(0)
+            }
+            Expr::Loop(expr, _) => self.translate_loop(*expr),
             Expr::Let(name, expr, _) => self.translate_let(name, *expr),
             _ => todo!(),
         }
     }
 
-    fn _translate_loop(&mut self, _name: String, _expr: Expr) -> Value {
-        todo!()
+    fn translate_loop(&mut self, expr: Expr) -> Value {
+        let cond_var = *self.variables.get("loop_cond").unwrap();
+        let lie = self.builder.ins().iconst(types::I64, 0);
+        self.builder.def_var(cond_var, lie);
+
+        let header_block = self.builder.create_block();
+        let body_block = self.builder.create_block();
+        let exit_block = self.builder.create_block();
+
+        self.builder.ins().jump(header_block, &[]);
+        self.builder.switch_to_block(header_block);
+
+        let condition_value = self.builder.use_var(cond_var);
+        self.builder.ins().brnz(condition_value, exit_block, &[]);
+        self.builder.ins().jump(body_block, &[]);
+
+        self.builder.switch_to_block(body_block);
+        self.builder.seal_block(body_block);
+
+        self.translate_expr(expr);
+
+        self.builder.ins().jump(header_block, &[]);
+
+        self.builder.switch_to_block(exit_block);
+        let lie = self.builder.ins().iconst(types::I64, 0);
+        self.builder.def_var(cond_var, lie);
+
+        self.builder.seal_block(header_block);
+        self.builder.seal_block(exit_block);
+        self.builder.ins().f64const(0)
     }
 
     fn translate_call(&mut self, name: String, exprs: Vec<Expr>) -> Value {
@@ -367,8 +413,8 @@ fn declare_variables_in_expr(
                 declare_variables_in_expr(expr, builder, variables, index)
             }
         }
-        Expr::Break(Some(expr), _) => declare_variables_in_expr(*expr, builder, variables, index),
-        Expr::Break(None, _) => (),
+        Expr::Return(Some(expr), _) => declare_variables_in_expr(*expr, builder, variables, index),
+        Expr::Return(None, _) => (),
         Expr::Loop(expr, _) => {
             let zero = builder.ins().iconst(types::I64, 0);
             let return_variable =
@@ -380,7 +426,8 @@ fn declare_variables_in_expr(
             declare_variable(types::F64, builder, variables, index, &name);
             declare_variables_in_expr(*expr, builder, variables, index)
         }
-        _ => todo!(),
+        Expr::Integer(_, _) => todo!(),
+        Expr::String(_, _) => todo!(),
     }
 }
 

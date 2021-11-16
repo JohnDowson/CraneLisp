@@ -11,7 +11,7 @@ pub enum Expr {
     Quoted(Box<Expr>, Span),
     Defun(String, FnArgs, Box<Expr>, Type, Span),
     If(Box<Expr>, Box<Expr>, Box<Expr>, Span),
-    Break(Option<Box<Expr>>, Span),
+    Return(Option<Box<Expr>>, Span),
     Loop(Box<Expr>, Span),
     Let(String, Box<Expr>, Span),
     String(String, Span),
@@ -47,7 +47,9 @@ impl Debug for Expr {
                     .field(arg2)
                     .field(arg3)
                     .finish(),
-                Self::Break(arg0, arg1) => f.debug_tuple("Return").field(arg0).field(arg1).finish(),
+                Self::Return(arg0, arg1) => {
+                    f.debug_tuple("Return").field(arg0).field(arg1).finish()
+                }
                 Self::Loop(arg0, arg1) => f.debug_tuple("Loop").field(arg0).field(arg1).finish(),
                 Self::Let(arg0, arg1, arg2) => f
                     .debug_tuple("Let")
@@ -79,7 +81,7 @@ impl Debug for Expr {
                     .field(arg1)
                     .field(arg2)
                     .finish(),
-                Self::Break(arg0, ..) => f.debug_tuple("Return").field(arg0).finish(),
+                Self::Return(arg0, ..) => f.debug_tuple("Return").field(arg0).finish(),
                 Self::Loop(arg0, ..) => f.debug_tuple("Loop").field(arg0).finish(),
                 Self::Let(arg0, arg1, ..) => f.debug_tuple("Let").field(arg0).field(arg1).finish(),
 
@@ -99,7 +101,7 @@ impl Display for Expr {
             Expr::Quoted(q, _) => write!(f, "Quoted {}", &*q),
             Expr::Defun(_, _, _, _, _) => write!(f, "Defun"),
             Expr::If(_, _, _, _) => write!(f, "If"),
-            Expr::Break(_, _) => write!(f, "Break"),
+            Expr::Return(_, _) => write!(f, "Break"),
             Expr::Loop(_, _) => write!(f, "Loop"),
             Expr::Let(_, _, _) => write!(f, "Let"),
             Expr::String(_, _) => write!(f, "String"),
@@ -117,7 +119,7 @@ impl Expr {
             Expr::Quoted(_, m) => m,
             Expr::Defun(.., m) => m,
             Expr::If(_, _, _, m) => m,
-            Expr::Break(_, m) => m,
+            Expr::Return(_, m) => m,
             Expr::Loop(_, m) => m,
             Expr::Let(_, _, m) => m,
             Expr::String(_, m) => m,
@@ -133,7 +135,7 @@ impl Expr {
             Expr::Quoted(_, _) => todo!(),
             Expr::Defun(_, _, _, _, _) => false,
             Expr::If(_, _, _, _) => true,
-            Expr::Break(_, _) => todo!(),
+            Expr::Return(_, _) => todo!(),
             Expr::Loop(_, _) => todo!(),
             Expr::Let(..) => false,
             Expr::String(_, _) => true,

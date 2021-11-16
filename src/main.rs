@@ -4,6 +4,7 @@ use clap::Parser;
 #[allow(dead_code, unused_imports)]
 pub use cranelisp::*;
 pub use errors::*;
+use repl::eval_source;
 mod repl;
 
 #[derive(clap::Parser)]
@@ -20,29 +21,26 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    let env = env_logger::Env::default()
-        .filter_or("CL_LOG_LEVEL", "cranelisp=trace")
-        .write_style_or("CL_LOG_STYLE", "always");
-    env_logger::init_from_env(env);
+    // let env = env_logger::Env::default()
+    //     .filter_or("CL_LOG_LEVEL", "cranelisp=trace")
+    //     .write_style_or("CL_LOG_STYLE", "always");
+    // env_logger::init_from_env(env);
 
     let args = Args::parse();
-    //if let Some(source) = args.exec {
-    //    let source = source.join(" ");
-    //    eval_source(source, args.time, args.dump_ast, args.dump_tokens)
-    //} else if let Some(source) = args.source {
-    //    let mut prog = File::open(&source)?;
-    //    let source = {
-    //        let mut src = String::new();
-    //        prog.read_to_string(&mut src)?;
-    //        src
-    //    };
-    //eval_source(source, args.time, args.dump_ast, args.dump_tokens)
-    //} else {
-    repl::repl(args.time, args.dump_ast, args.dump_tokens, args.dump_clir)
-    //}
+    if let Some(source) = args.source {
+        eval_source(
+            &source,
+            args.time,
+            args.dump_ast,
+            args.dump_tokens,
+            args.dump_clir,
+        )
+    } else {
+        repl::repl(args.time, args.dump_ast, args.dump_tokens, args.dump_clir)
+    }
 }
 
-pub fn provide_diagnostic(error: CranelispError, program: impl Into<ariadne::Source> + Debug) {
+pub fn provide_diagnostic(error: &CranelispError, program: impl Into<ariadne::Source> + Debug) {
     use ariadne::{Label, Report, ReportKind};
     match error {
         CranelispError::Syntax(s) => {
@@ -94,5 +92,13 @@ mod test {
         for (i, &expect) in expected.iter().enumerate() {
             assert_eq!(format!("{:?}", tokens[i]), expect)
         }
+    }
+
+    #[test]
+    fn test_list() {
+        use cranelisp::list::List;
+        let list = List::new(1.1).push(2.2).push(3.3).tail();
+        eprintln!("{:?}", list);
+        panic!()
     }
 }

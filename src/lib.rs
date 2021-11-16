@@ -21,17 +21,17 @@ macro_rules! syntax {
         }
     };
 }
-
 pub mod errors;
 pub mod eval;
 pub mod function;
 pub mod jit;
 pub mod lexer;
+pub mod list;
 pub mod parser;
-use eval::Value;
-
 pub use errors::*;
+use eval::Value;
 use fnv::FnvHashMap;
+
 pub type Env = FnvHashMap<String, Value>;
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
 
@@ -89,7 +89,7 @@ impl ariadne::Span for Span {
     }
 }
 
-mod libcl {
+pub mod libcl {
 
     #[no_mangle]
     #[export_name = "print"]

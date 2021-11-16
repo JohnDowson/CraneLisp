@@ -26,6 +26,10 @@ impl Lexer {
         .okay()
     }
 
+    pub fn finished(&self) -> bool {
+        self.next >= self.src.len()
+    }
+
     fn consume_negative_number(&mut self) -> Result<Token> {
         let start = self.next;
         self.consume();
@@ -150,6 +154,15 @@ impl Lexer {
                     let end = self.next - 1;
                     Token::whitespace(Span::new(start, end)).okay()
                 }
+                '\'' => {
+                    self.consume();
+                    Token::quote(Span::point(self.next - 1)).okay()
+                }
+                '#' => {
+                    self.consume();
+                    self.consume_until(|c| c == '\n');
+                    self.next_token()
+                }
                 ':' => {
                     self.consume();
                     Token::type_separator(Span::point(self.next - 1)).okay()
@@ -178,11 +191,6 @@ impl Lexer {
                 }
                 c if !c.is_numeric() && !c.is_whitespace() => self.consume_symbol(),
 
-                '\'' => {
-                    //trace!("Consuming Quote at location {}", self.next);
-                    self.consume();
-                    Token::quote(Span::point(self.next - 1)).okay()
-                }
                 c => syntax!(
                     UnexpectedCharacter,
                     (Span::point(self.next), format!("{:?}", c))
