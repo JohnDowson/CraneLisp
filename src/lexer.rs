@@ -10,17 +10,15 @@ pub use token::Token;
 pub struct Lexer {
     src: Vec<char>,
     _src: *mut str,
-    src_id: &'static str,
     next: usize,
 }
 
 impl Lexer {
-    pub fn new(_src: String, src_id: &'static str) -> Result<Self> {
+    pub fn new(_src: String) -> Result<Self> {
         let _src = Box::leak(_src.into_boxed_str());
         Self {
             src: _src.chars().collect(),
             _src,
-            src_id,
             next: 0,
         }
         .okay()
@@ -34,14 +32,10 @@ impl Lexer {
         let start = self.next;
         self.consume();
         let number = self.consume_number()?;
-        if number.is_float() {
-            Token::integer(
-                Span::new(start, number.span.end),
-                -number.extract_integer()?,
-            )
-            .okay()
-        } else {
-            todo!()
+        match number {
+            Token::Float(f, _) => Token::Float(-f, Span::new(start, number.span().end)).okay(),
+            Token::Integer(i, _) => Token::Integer(-i, Span::new(start, number.span().end)).okay(),
+            _ => unreachable!(),
         }
     }
 
@@ -58,7 +52,7 @@ impl Lexer {
                 let num = number
                     .parse::<f64>()
                     .map_err(|e| syntax!(InvalidLiteral, (Span::new(start, end), e.to_string())))?;
-                return Token::float(Span::new(start, end), num).okay();
+                return Token::Float(num, Span::new(start, end)).okay();
             }
             Some(c) if c.is_numeric() => {
                 let integer = self.consume_until(|c| !c.is_numeric());
@@ -95,11 +89,11 @@ impl Lexer {
                 if fp {
                     number = [integer, decimal].join(".")
                 } else {
-                    return Token::integer(
-                        Span::new(start, self.next),
+                    return Token::Integer(
                         integer.parse::<i64>().map_err(|e| {
                             syntax!(InvalidLiteral, (Span::new(start, self.next), e.to_string()))
                         })?,
+                        Span::new(start, self.next),
                     )
                     .okay();
                 }
@@ -117,11 +111,11 @@ impl Lexer {
             None => (),
         }
         let end = self.next;
-        Token::float(
-            Span::new(start, self.next),
+        Token::Float(
             number
                 .parse::<f64>()
                 .map_err(|e| syntax!(InvalidLiteral, (Span::new(start, end), e.to_string())))?,
+            Span::new(start, self.next),
         )
         .okay()
     }
@@ -135,7 +129,7 @@ impl Lexer {
         //     symbol,
         //     start..end
         // );
-        Ok(Token::symbol(Span::new(start, end), symbol))
+        Ok(Token::Symbol(symbol, Span::new(start, end)))
     }
 
     pub fn peek_token(&mut self) -> Result<Token> {
@@ -152,11 +146,11 @@ impl Lexer {
                     let start = self.next;
                     self.consume_until(|c| !c.is_whitespace());
                     let end = self.next - 1;
-                    Token::whitespace(Span::new(start, end)).okay()
+                    Token::Whitespace(Span::new(start, end)).okay()
                 }
                 '\'' => {
                     self.consume();
-                    Token::quote(Span::point(self.next - 1)).okay()
+                    Token::Quote(Span::point(self.next - 1)).okay()
                 }
                 '#' => {
                     self.consume();
@@ -165,7 +159,7 @@ impl Lexer {
                 }
                 ':' => {
                     self.consume();
-                    Token::type_separator(Span::point(self.next - 1)).okay()
+                    Token::TypeSeparator(Span::point(self.next - 1)).okay()
                 }
                 '"' => {
                     let start = self.next;
@@ -173,17 +167,17 @@ impl Lexer {
                     let string = self.consume_until(|c| c == '"');
                     let end = self.next;
                     self.consume();
-                    Token::string(Span::new(start, end), string).okay()
+                    Token::String(string, Span::new(start, end)).okay()
                 }
                 '(' => {
                     //trace!("Consuming LParen at location {}", self.next);
                     self.consume();
-                    Token::lparen(Span::point(self.next - 1)).okay()
+                    Token::LParen(Span::point(self.next - 1)).okay()
                 }
                 ')' => {
                     //trace!("Consuming RParen at location {}", self.next);
                     self.consume();
-                    Token::rparen(Span::point(self.next - 1)).okay()
+                    Token::RParen(Span::point(self.next - 1)).okay()
                 }
                 c if c.is_numeric() || c == &'.' => self.consume_number(),
                 '-' if matches!(self.peekn(1), Some(c) if c.is_numeric()) => {
@@ -198,7 +192,7 @@ impl Lexer {
                 .error(),
             }
         } else {
-            Token::eof(Span::point(self.next)).okay()
+            Token::Eof(Span::point(self.next)).okay()
         }
     }
 
@@ -233,7 +227,7 @@ impl Lexer {
     pub fn collect(&mut self) -> Vec<Token> {
         let mut tt = Vec::new();
         while let Ok(t) = self.next_token() {
-            if t.is_eof() {
+            if matches!(t, Token::Eof(..)) {
                 tt.push(t);
                 break;
             }

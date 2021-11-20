@@ -1,186 +1,143 @@
-use somok::Somok;
-
-use crate::Result;
 use crate::Span;
 use std::fmt::Debug;
 
-pub struct Token {
-    pub span: Span,
-    kind: TokenKind,
-    data: TokenData,
+pub enum Token {
+    LParen(Span),
+    RParen(Span),
+    Float(f64, Span),
+    Integer(i64, Span),
+    Symbol(String, Span),
+    String(String, Span),
+    Quote(Span),
+    TypeSeparator(Span),
+    Eof(Span),
+    Whitespace(Span),
 }
 
 impl Debug for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.kind)?;
-        if matches!(self.data, TokenData::None) {
-            ().okay()
-        } else {
-            write!(f, "({:?})", self.data)
+        match self {
+            Self::LParen(..) => write!(f, "("),
+            Self::RParen(..) => write!(f, ")"),
+            Self::Float(float, ..) => write!(f, "{:?}", float),
+            Self::Integer(int, ..) => write!(f, "{:?}", int),
+            Self::Symbol(sym, ..) => write!(f, "{:?}", sym),
+            Self::String(str, ..) => write!(f, "\"{:?}\"", str),
+            Self::Quote(..) => write!(f, "'"),
+            Self::TypeSeparator(..) => write!(f, ":"),
+            Self::Eof(..) => write!(f, "Eof"),
+            Self::Whitespace(..) => write!(f, " "),
         }
     }
 }
 
 impl Token {
-    fn new(span: Span, kind: TokenKind, data: TokenData) -> Self {
-        Self { span, kind, data }
+    pub fn span(&self) -> Span {
+        *match self {
+            Token::LParen(span) => span,
+            Token::RParen(span) => span,
+            Token::Float(_, span) => span,
+            Token::Integer(_, span) => span,
+            Token::Symbol(_, span) => span,
+            Token::String(_, span) => span,
+            Token::Quote(span) => span,
+            Token::TypeSeparator(span) => span,
+            Token::Eof(span) => span,
+            Token::Whitespace(span) => span,
+        }
     }
-
-    pub fn lparen(span: Span) -> Self {
-        Self::new(span, TokenKind::LParen, TokenData::None)
+    pub fn extract_float(&self) -> f64 {
+        match self {
+            Self::Float(f, ..) => *f,
+            _ => panic!(),
+        }
     }
-    pub fn is_lparen(&self) -> bool {
-        matches!(self.kind, TokenKind::LParen)
+    pub fn extract_integer(&self) -> i64 {
+        match self {
+            Self::Integer(i, ..) => *i,
+            _ => panic!(),
+        }
     }
-
-    pub fn rparen(span: Span) -> Self {
-        Self::new(span, TokenKind::RParen, TokenData::None)
+    pub fn extract_symbol(&self) -> String {
+        match self {
+            Self::Symbol(s, ..) => s.clone(),
+            _ => panic!(),
+        }
     }
-    pub fn is_rparen(&self) -> bool {
-        matches!(self.kind, TokenKind::RParen)
-    }
-
-    pub fn float(span: Span, num: impl Into<f64>) -> Self {
-        Self::new(span, TokenKind::Float, TokenData::Float(num.into()))
-    }
-    pub fn is_float(&self) -> bool {
-        matches!(self.kind, TokenKind::Float)
-    }
-    pub fn extract_float(&self) -> Result<f64> {
-        if self.is_float() {
-            match self.data {
-                TokenData::Float(f) => f.okay(),
-                _ => unreachable!(),
-            }
-        } else {
-            syntax!(UnexpectedToken, (self.span, "expected float here".into())).error()
+    pub fn extract_string(&self) -> String {
+        match self {
+            Self::String(s, ..) => s.clone(),
+            _ => panic!(),
         }
     }
 
-    pub fn integer(span: Span, num: impl Into<i64>) -> Self {
-        Self::new(span, TokenKind::Integer, TokenData::Integer(num.into()))
-    }
-    pub fn is_integer(&self) -> bool {
-        matches!(self.kind, TokenKind::Integer)
-    }
-    pub fn extract_integer(&self) -> Result<i64> {
-        if self.is_integer() {
-            match self.data {
-                TokenData::Integer(i) => i.okay(),
-                _ => unreachable!(),
-            }
-        } else {
-            syntax!(UnexpectedToken, (self.span, "expected integer here".into())).error()
-        }
-    }
-
-    pub fn symbol(span: Span, sym: impl Into<String>) -> Self {
-        Self::new(span, TokenKind::Symbol, TokenData::String(sym.into()))
-    }
-    pub fn is_symbol(&self) -> bool {
-        matches!(self.kind, TokenKind::Symbol)
-    }
-    pub fn extract_symbol(&self) -> Result<String> {
-        if self.is_symbol() {
-            match &self.data {
-                TokenData::String(s) => s.clone().okay(),
-                _ => unreachable!(),
-            }
-        } else {
-            syntax!(UnexpectedToken, (self.span, "expected symbol here".into())).error()
-        }
-    }
-
-    pub fn string(span: Span, str: impl Into<String>) -> Self {
-        let str = str.into().replace("\\n", "\n");
-        Self::new(span, TokenKind::String, TokenData::String(str))
-    }
-    pub fn is_string(&self) -> bool {
-        matches!(self.kind, TokenKind::String)
-    }
-    pub fn extract_string(&self) -> Result<String> {
-        if self.is_string() {
-            match &self.data {
-                TokenData::String(s) => s.clone().okay(),
-                _ => unreachable!(),
-            }
-        } else {
-            syntax!(UnexpectedToken, (self.span, "expected string here".into())).error()
-        }
-    }
-
-    pub fn quote(span: Span) -> Self {
-        Self::new(span, TokenKind::Quote, TokenData::None)
-    }
-    pub fn is_quote(&self) -> bool {
-        matches!(self.kind, TokenKind::Quote)
-    }
-
-    pub fn type_separator(span: Span) -> Self {
-        Self::new(span, TokenKind::TypeSeparator, TokenData::None)
-    }
-    pub fn is_type_separator(&self) -> bool {
-        matches!(self.kind, TokenKind::TypeSeparator)
-    }
-
-    pub fn eof(span: Span) -> Self {
-        Self::new(span, TokenKind::Eof, TokenData::None)
-    }
-    pub fn is_eof(&self) -> bool {
-        matches!(self.kind, TokenKind::Eof)
-    }
-    pub fn whitespace(span: Span) -> Self {
-        Self::new(span, TokenKind::Whitespace, TokenData::None)
-    }
+    /// Returns `true` if the token is [`Whitespace`].
+    ///
+    /// [`Whitespace`]: Token::Whitespace
     pub fn is_whitespace(&self) -> bool {
-        matches!(self.kind, TokenKind::Whitespace)
+        matches!(self, Self::Whitespace(..))
     }
-}
 
-pub enum TokenData {
-    String(String), // don't forget to replce `/n` with literal newline
-    Float(f64),
-    Integer(i64),
-    None,
-}
-
-impl Debug for TokenData {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::String(s) => write!(fmt, "{:?}", s),
-            Self::Float(f) => write!(fmt, "{:?}", f),
-            Self::Integer(i) => write!(fmt, "{:?}", i),
-            Self::None => ().okay(),
-        }
+    /// Returns `true` if the token is [`LParen`].
+    ///
+    /// [`LParen`]: Token::LParen
+    pub fn is_lparen(&self) -> bool {
+        matches!(self, Self::LParen(..))
     }
-}
 
-pub enum TokenKind {
-    LParen,
-    RParen,
-    Float,
-    Integer,
-    Symbol,
-    String,
-    Quote,
-    TypeSeparator,
-    Eof,
-    Whitespace,
-}
+    /// Returns `true` if the token is [`RParen`].
+    ///
+    /// [`RParen`]: Token::RParen
+    pub fn is_rparen(&self) -> bool {
+        matches!(self, Self::RParen(..))
+    }
 
-impl Debug for TokenKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::LParen => write!(f, "("),
-            Self::RParen => write!(f, ")"),
-            Self::Float => write!(f, ""),
-            Self::Integer => write!(f, ""),
-            Self::Symbol => write!(f, ""),
-            Self::String => write!(f, "Str"),
-            Self::Quote => write!(f, "'"),
-            Self::TypeSeparator => write!(f, ":"),
-            Self::Eof => write!(f, "Eof"),
-            Self::Whitespace => write!(f, " "),
-        }
+    /// Returns `true` if the token is [`Float`].
+    ///
+    /// [`Float`]: Token::Float
+    pub fn is_float(&self) -> bool {
+        matches!(self, Self::Float(..))
+    }
+
+    /// Returns `true` if the token is [`Integer`].
+    ///
+    /// [`Integer`]: Token::Integer
+    pub fn is_integer(&self) -> bool {
+        matches!(self, Self::Integer(..))
+    }
+
+    /// Returns `true` if the token is [`Symbol`].
+    ///
+    /// [`Symbol`]: Token::Symbol
+    pub fn is_symbol(&self) -> bool {
+        matches!(self, Self::Symbol(..))
+    }
+
+    /// Returns `true` if the token is [`String`].
+    ///
+    /// [`String`]: Token::String
+    pub fn is_string(&self) -> bool {
+        matches!(self, Self::String(..))
+    }
+
+    /// Returns `true` if the token is [`Quote`].
+    ///
+    /// [`Quote`]: Token::Quote
+    pub fn is_quote(&self) -> bool {
+        matches!(self, Self::Quote(..))
+    }
+
+    /// Returns `true` if the token is [`TypeSeparator`].
+    ///
+    /// [`TypeSeparator`]: Token::TypeSeparator
+    pub fn is_type_separator(&self) -> bool {
+        matches!(self, Self::TypeSeparator(..))
+    }
+
+    /// Returns `true` if the token is [`Eof`].
+    ///
+    /// [`Eof`]: Token::Eof
+    pub fn is_eof(&self) -> bool {
+        matches!(self, Self::Eof(..))
     }
 }

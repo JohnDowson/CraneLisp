@@ -31,9 +31,26 @@ pub mod parser;
 pub use errors::*;
 use eval::Value;
 use fnv::FnvHashMap;
+use somok::Somok;
 
 pub type Env = FnvHashMap<String, Value>;
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
+
+trait TryRemove {
+    type Item;
+    fn try_remove(&mut self, i: usize) -> Option<Self::Item>;
+}
+impl<T> TryRemove for Vec<T> {
+    type Item = T;
+
+    fn try_remove(&mut self, i: usize) -> Option<Self::Item> {
+        if i < self.len() {
+            self.remove(i).some()
+        } else {
+            None
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct Span {
@@ -90,39 +107,51 @@ impl ariadne::Span for Span {
 }
 
 pub mod libcl {
+    use crate::eval::value::{Tag, Value};
 
     #[no_mangle]
-    #[export_name = "print"]
     pub extern "C" fn cl_print(n: f64) -> f64 {
         println!("{}", n);
         0.0
     }
     #[no_mangle]
-    #[export_name = "+"]
-    pub extern "C" fn plus(a: f64, b: f64) -> f64 {
-        a + b
-    }
-    #[no_mangle]
-    #[export_name = "-"]
-    pub extern "C" fn minus(a: f64, b: f64) -> f64 {
-        a - b
-    }
-    #[no_mangle]
-    #[export_name = "<"]
-    pub extern "C" fn less_than(a: f64, b: f64) -> f64 {
-        if a < b {
-            1.0
-        } else {
-            0.0
+    pub extern "C" fn add(ret: &mut Value, a: &Value, b: &Value) {
+        match (a.tag, b.tag) {
+            (Tag::Int, Tag::Int) => *ret = Value::new_int(a.as_int() + b.as_int()),
+            (Tag::Int, Tag::Float) => *ret = Value::new_int(a.as_int() + b.as_float() as i64),
+            (Tag::Float, Tag::Int) => *ret = Value::new_float(a.as_float() + b.as_int() as f64),
+            (Tag::Float, Tag::Float) => *ret = Value::new_float(a.as_float() + b.as_float()),
+            _ => panic!("Can't add non-numbers"),
         }
     }
     #[no_mangle]
-    #[export_name = ">"]
-    pub extern "C" fn more_than(a: f64, b: f64) -> f64 {
-        if a > b {
-            1.0
-        } else {
-            0.0
+    pub extern "C" fn sub(ret: &mut Value, a: &Value, b: &Value) {
+        match (a.tag, b.tag) {
+            (Tag::Int, Tag::Int) => *ret = Value::new_int(a.as_int() - b.as_int()),
+            (Tag::Int, Tag::Float) => *ret = Value::new_int(a.as_int() - b.as_float() as i64),
+            (Tag::Float, Tag::Int) => *ret = Value::new_float(a.as_float() - b.as_int() as f64),
+            (Tag::Float, Tag::Float) => *ret = Value::new_float(a.as_float() - b.as_float()),
+            _ => panic!("Can't subtract non-numbers"),
+        }
+    }
+    #[no_mangle]
+    pub extern "C" fn less_than(ret: &mut Value, a: &Value, b: &Value) {
+        match (a.tag, b.tag) {
+            (Tag::Int, Tag::Int) => *ret = Value::new_bool(a.as_int() < b.as_int()),
+            (Tag::Int, Tag::Float) => *ret = Value::new_bool(a.as_int() < b.as_float() as i64),
+            (Tag::Float, Tag::Int) => *ret = Value::new_bool(a.as_float() < b.as_int() as f64),
+            (Tag::Float, Tag::Float) => *ret = Value::new_bool(a.as_float() < b.as_float()),
+            _ => panic!("Can't subtract non-numbers"),
+        }
+    }
+    #[no_mangle]
+    pub extern "C" fn more_than(ret: &mut Value, a: &Value, b: &Value) {
+        match (a.tag, b.tag) {
+            (Tag::Int, Tag::Int) => *ret = Value::new_bool(a.as_int() > b.as_int()),
+            (Tag::Int, Tag::Float) => *ret = Value::new_bool(a.as_int() > b.as_float() as i64),
+            (Tag::Float, Tag::Int) => *ret = Value::new_bool(a.as_float() > b.as_int() as f64),
+            (Tag::Float, Tag::Float) => *ret = Value::new_bool(a.as_float() > b.as_float()),
+            _ => panic!("Can't subtract non-numbers"),
         }
     }
 }

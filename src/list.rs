@@ -1,13 +1,12 @@
-use std::fmt::Debug;
-
 use somok::Somok;
-
+use std::fmt::Debug;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct List {
     value: Option<f64>,
     next: Option<*mut List>,
 }
+
 impl List {
     /// # Safety
     /// Not safe at all

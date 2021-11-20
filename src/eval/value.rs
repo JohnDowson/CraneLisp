@@ -1,155 +1,200 @@
+use crate::function::Func;
+use somok::Somok;
 use std::fmt::Debug;
-use std::ops::{Add, Div, Mul, Sub};
 
-use crate::function::{FnBody, Function, Signature};
+pub fn cons(v1: Value, v2: Value) -> Value {
+    let tail = Box::leak(Box::new(Pair {
+        value: v2,
+        next: Value::NULL,
+    }));
+    let head = Pair {
+        value: v1,
+        next: Value {
+            tag: Tag::Ptr,
+            value: tail as *mut _ as _,
+        },
+    };
 
-#[derive(Clone)]
-pub enum Value {
-    Float(f64),
-    Integer(i64),
-    String(String),
-    Func(Function),
-    Return(Box<Value>),
-    None,
+    Value::new_pair(Box::leak(Box::new(head)))
+}
+pub fn head(v: Value) -> Value {
+    let value = v.as_pair().value;
+    Value::new_pair(Box::leak(Box::new(Pair {
+        value,
+        next: Value::NULL,
+    })))
+}
+pub fn tail(v: Value) -> Value {
+    v.as_pair().next
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Pair {
+    pub value: Value,
+    pub next: Value,
 }
 
+impl Debug for Pair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("")
+            .field(&self.value)
+            .field(&self.next)
+            .finish()
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Value {
+    pub tag: Tag,
+    value: u64,
+}
 impl Value {
-    pub const TRUE: Value = Value::Integer(1);
-    pub const FALSE: Value = Value::Integer(0);
+    pub const NULL: Self = Self {
+        tag: Tag::Null,
+        value: 0,
+    };
+    pub const TRUE: Self = Self {
+        tag: Tag::Null,
+        value: 0,
+    };
+    pub const FALSE: Self = Self {
+        tag: Tag::Null,
+        value: 0,
+    };
 
-    pub fn float(n: f64) -> Self {
-        Self::Float(n)
+    pub fn new_int(value: i64) -> Self {
+        Self {
+            tag: Tag::Int,
+            value: value as u64,
+        }
     }
-    pub fn func(sig: Signature, body: FnBody) -> Self {
-        Value::Func(Function::new(sig, body))
+    pub fn new_float(value: f64) -> Self {
+        Self {
+            tag: Tag::Float,
+            value: value.to_bits(),
+        }
     }
-
-    pub fn unwrap_fn(self) -> Function {
-        match self {
-            Value::Float(_) => panic!("Called 'unwrap_fn' on a value of type Number"),
-            Value::Integer(_) => panic!("Called 'unwrap_fn' on a value of type Integer"),
-            Value::String(_) => panic!("Called 'unwrap_fn' on a value of type String"),
-            Value::None => panic!("Called 'unwrap_fn' on a value of type None"),
-            Value::Return(..) => panic!("Called 'unwrap_fn' on a value of type Return"),
-            Value::Func(f) => f,
+    pub fn new_pair(value: *mut Pair) -> Self {
+        Self {
+            tag: Tag::Pair,
+            value: value as u64,
+        }
+    }
+    pub fn new_ptr<T>(value: *mut T) -> Self {
+        Self {
+            tag: Tag::Ptr,
+            value: value as u64,
+        }
+    }
+    pub fn new_func(value: Func) -> Self {
+        Self {
+            tag: Tag::Func,
+            value: Box::leak(Box::new(value)) as *mut _ as u64,
+        }
+    }
+    pub fn new_bool(value: bool) -> Self {
+        Self {
+            tag: Tag::Bool,
+            value: value as u64,
         }
     }
 
-    pub fn unwrap_float(self) -> f64 {
-        match self {
-            Value::Float(n) => n,
-            Value::Integer(_) => panic!("Called 'unwrap_float' on a value of type Integer"),
-            Value::String(_) => panic!("Called 'unwrap_float' on a value of type String"),
-            Value::None => panic!("Called 'unwrap_float' on a value of type None"),
-            Value::Return(..) => panic!("Called 'unwrap_float' on a value of type Return"),
-            Value::Func(_) => panic!("Called 'unwrap_float' on a value of type Func"),
+    pub fn as_int(&self) -> i64 {
+        match self.tag {
+            Tag::Null => self.value as _,
+            Tag::Int => self.value as _,
+            Tag::Float => panic!("Can't cast Float to Int"),
+            Tag::Ptr => panic!("Can't cast Ptr to Int"),
+            Tag::Pair => panic!("Can't cast Pair to Int"),
+            Tag::Func => panic!("Can't cast Func to Int"),
+            Tag::Bool => panic!("Can't cast Bool to Int"),
         }
     }
 
-    /// Returns `true` if the value is [`Func`].
-    ///
-    /// [`Func`]: Value::Func
-    pub fn is_func(&self) -> bool {
-        matches!(self, Self::Func(..))
-    }
-
-    /// Returns `true` if the value is [`Return`].
-    ///
-    /// [`Return`]: Value::Return
-    pub fn is_return(&self) -> bool {
-        matches!(self, Self::Return(..))
-    }
-
-    pub fn is_valued_return(&self) -> bool {
-        matches!(self, Value::Return(v) if !v.is_none())
-    }
-
-    pub fn return_inner(self) -> Value {
-        match self {
-            Value::Return(v) => *v,
-            _ => panic!("Tried to unwrap return on non-return value"),
+    pub fn as_float(&self) -> f64 {
+        match self.tag {
+            Tag::Null => f64::from_bits(self.value),
+            Tag::Int => panic!("Can't cast Int to Float"),
+            Tag::Float => f64::from_bits(self.value),
+            Tag::Ptr => panic!("Can't cast Ptr to Float"),
+            Tag::Pair => panic!("Can't cast Pair to Float"),
+            Tag::Func => panic!("Can't cast Func to Float"),
+            Tag::Bool => panic!("Can't cast Bool to Float"),
         }
     }
 
-    /// Returns `true` if the value is [`None`].
-    ///
-    /// [`None`]: Value::None
-    pub fn is_none(&self) -> bool {
-        matches!(self, Self::None)
-    }
-}
-
-impl Add for &Value {
-    type Output = Value;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
-            _ => panic!("Type mismatch"),
+    pub fn as_ptr<T>(&self) -> *mut T {
+        match self.tag {
+            Tag::Null => panic!("Can't cast Null to Ptr"),
+            Tag::Int => panic!("Can't cast Int to Ptr"),
+            Tag::Float => panic!("Can't cast Float to Ptr"),
+            Tag::Ptr => self.value as *mut T,
+            Tag::Pair => panic!("Can't cast Pair to Ptr"),
+            Tag::Func => panic!("Can't cast Func to Ptr"),
+            Tag::Bool => panic!("Can't cast Bool to Ptr"),
         }
     }
-}
 
-impl Mul for &Value {
-    type Output = Value;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (Value::Float(a), Value::Float(b)) => Value::Float(a * b),
-            _ => panic!("Type mismatch"),
+    pub fn as_pair(&self) -> &'static mut Pair {
+        match self.tag {
+            Tag::Null => panic!("Can't cast Null to Pair"),
+            Tag::Int => panic!("Can't cast Int to Pair"),
+            Tag::Float => panic!("Can't cast Float to Pair"),
+            Tag::Ptr => panic!("Can't cast Ptr to Pair"),
+            Tag::Pair => unsafe { std::mem::transmute(self.value) },
+            Tag::Func => panic!("Can't cast Func to Pair"),
+            Tag::Bool => panic!("Can't cast Bool to Pair"),
         }
     }
-}
 
-impl Div for &Value {
-    type Output = Value;
-
-    fn div(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (Value::Float(a), Value::Float(b)) => Value::Float(a / b),
-            _ => panic!("Type mismatch"),
+    pub fn as_func(&self) -> *mut Func {
+        match self.tag {
+            Tag::Null => panic!("Can't cast Null to Func"),
+            Tag::Int => panic!("Can't cast Int to Func"),
+            Tag::Float => panic!("Can't cast Float to Func"),
+            Tag::Ptr => panic!("Can't cast Ptr to Func"),
+            Tag::Pair => panic!("Can't cast Pair to Func"),
+            Tag::Func => unsafe { std::mem::transmute(self.value) },
+            Tag::Bool => panic!("Can't cast Bool to Func"),
         }
     }
-}
-
-impl PartialEq for Value {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Float(l0), Self::Float(r0)) => l0 == r0,
-            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
-        }
-    }
-}
-
-impl PartialOrd for Value {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match (self, other) {
-            (Self::Float(l0), Self::Float(r0)) => l0.partial_cmp(r0),
-            _ => None,
-        }
-    }
-}
-
-impl Sub for &Value {
-    type Output = Value;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (Value::Float(a), Value::Float(b)) => Value::Float(a - b),
-            _ => panic!("Type mismatch"),
+    pub fn as_bool(&self) -> bool {
+        match self.tag {
+            Tag::Null => panic!("Can't cast Null to Bool"),
+            Tag::Int => panic!("Can't cast Int to Bool"),
+            Tag::Float => panic!("Can't cast Float to Bool"),
+            Tag::Ptr => panic!("Can't cast Ptr to Bool"),
+            Tag::Pair => panic!("Can't cast Pair to Bool"),
+            Tag::Func => panic!("Can't cast Func to Bool"),
+            Tag::Bool => self.value != 0,
         }
     }
 }
 
 impl Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Value::Float(inner) => write!(f, "{:?}", inner),
-            Value::Integer(inner) => write!(f, "{:?}", inner),
-            Value::String(inner) => write!(f, "{:?}", inner),
-            Value::Func(fun) => write!(f, "{:?}", fun),
-            Value::None => write!(f, "None"),
-            Value::Return(v) => write!(f, "Return({:?})", v),
+        write!(f, "{:?} ", self.tag)?;
+        match self.tag {
+            Tag::Null => ().okay(),
+            Tag::Int => write!(f, "{:?}", self.as_int()),
+            Tag::Float => write!(f, "{:?}", self.as_float()),
+            Tag::Ptr => write!(f, "{:?}", unsafe { *self.as_ptr::<Value>() }),
+            Tag::Pair => write!(f, "{:?}", self.as_pair()),
+            Tag::Func => write!(f, "Func"),
+            Tag::Bool => write!(f, "{:?}", self.as_bool()),
         }
     }
+}
+
+#[repr(i64)]
+#[derive(Clone, Copy, Debug)]
+pub enum Tag {
+    Null = 0,
+    Int = 1,
+    Float = 2,
+    Ptr = 3,
+    Pair = 4,
+    Func = 5,
+    Bool = 6,
 }

@@ -6,7 +6,7 @@ use fnv::FnvHashMap;
 use std::collections::HashMap;
 //use std::slice;
 
-use crate::parser::Expr;
+use crate::parser::{Args, DefunExpr, Expr};
 use crate::{libcl::*, Result};
 
 pub struct Jit {
@@ -14,7 +14,7 @@ pub struct Jit {
     ctx: codegen::Context,
     // data_ctx: DataContext,
     module: JITModule,
-    fun_lookup: FnvHashMap<String, crate::function::Signature>,
+    fun_lookup: FnvHashMap<String, Args>,
     pub show_clir: bool,
 }
 
@@ -25,40 +25,15 @@ macro_rules! defsym {
     };
     ($builder:expr; $fun_lookup:expr; BINARY $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
-        $fun_lookup.insert(
-            $sym.into(),
-            crate::function::Signature::build()
-                .set_name(std::stringify!($sym).into())
-                .push_arg(("a".into(), crate::function::Type::Float))
-                .push_arg(("b".into(), crate::function::Type::Float))
-                .set_ret(crate::function::Type::Float)
-                .finish()
-                .unwrap(),
-        );
+        $fun_lookup.insert($sym.into(), Args::Arglist(vec!["a".into(), "b".into()]));
     };
     ($builder:expr; $fun_lookup:expr; VARARG $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
-        $fun_lookup.insert(
-            $sym.into(),
-            crate::function::Signature::build()
-                .set_name(std::stringify!($sym).into())
-                .set_foldable(crate::function::Type::Float)
-                .set_ret(crate::function::Type::Float)
-                .finish()
-                .unwrap(),
-        );
+        $fun_lookup.insert($sym.into(), Args::Foldable);
     };
     ($builder:expr; $fun_lookup:expr; UNARY $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
-        $fun_lookup.insert(
-            $sym.into(),
-            crate::function::Signature::build()
-                .set_name(std::stringify!($sym).into())
-                .push_arg(("a".into(), crate::function::Type::Float))
-                .set_ret(crate::function::Type::Number)
-                .finish()
-                .unwrap(),
-        );
+        $fun_lookup.insert($sym.into(), Args::Arglist(vec!["a".into()]));
     };
     // Autoname
     ($builder:expr; $fun:path) => {
@@ -68,37 +43,18 @@ macro_rules! defsym {
         $builder.symbol(std::stringify!($fun), $fun as *const u8);
         $fun_lookup.insert(
             std::stringify!($fun).into(),
-            crate::function::Signature::build()
-                .set_name(std::stringify!($fun).into())
-                .push_arg(("a".into(), crate::function::Type::Number))
-                .push_arg(("b".into(), crate::function::Type::Number))
-                .set_ret(crate::function::Type::Number)
-                .finish()
-                .unwrap(),
+            Args::Arglist(vec!["a".into(), "b".into()]),
         );
     };
     ($builder:expr; $fun_lookup:expr; VARARG $fun:path) => {
         $builder.symbol(std::stringify!($fun), $fun as *const u8);
-        $fun_lookup.insert(
-            std::stringify!($fun).into(),
-            crate::function::Signature::build()
-                .set_name(std::stringify!($fun).into())
-                .set_foldable(true)
-                .set_ret(crate::function::Type::Number)
-                .finish()
-                .unwrap(),
-        );
+        $fun_lookup.insert(std::stringify!($fun).into(), Args::Foldable);
     };
     ($builder:expr; $fun_lookup:expr; UNARY $fun:path) => {
         $builder.symbol(std::stringify!($fun), $fun as *const u8);
         $fun_lookup.insert(
             std::stringify!($fun).into(),
-            crate::function::Signature::build()
-                .set_name(std::stringify!($fun).into())
-                .push_arg(("a".into(), crate::function::Type::Float))
-                .set_ret(crate::function::Type::Float)
-                .finish()
-                .unwrap(),
+            Args::Arglist(vec!["a".into()]),
         );
     };
 }
@@ -109,10 +65,11 @@ impl Default for Jit {
         builder.hotswap(true);
         let mut fun_lookup = FnvHashMap::default();
         defsym!(builder; fun_lookup; UNARY cl_print);
-        defsym!(builder; fun_lookup; VARARG "+" => plus);
-        defsym!(builder; fun_lookup; VARARG "-" => minus);
+        defsym!(builder; fun_lookup; VARARG "+" => add);
+        defsym!(builder; fun_lookup; VARARG "-" => sub);
         defsym!(builder; fun_lookup; BINARY "<" => less_than);
         defsym!(builder; fun_lookup; BINARY ">" => more_than);
+
         let module = JITModule::new(builder);
         Self {
             builder_ctx: FunctionBuilderContext::new(),
@@ -126,10 +83,10 @@ impl Default for Jit {
 }
 
 impl Jit {
-    pub fn compile(&mut self, fun: crate::function::Function) -> Result<*const u8> {
+    pub fn compile(&mut self, fun: DefunExpr) -> Result<*const u8> {
         self.module.clear_context(&mut self.ctx);
-        let name = fun.name();
-        let sig = fun.signature();
+        let name = fun.name.clone();
+        let sig = fun.args.clone();
         self.fun_lookup.insert(name.clone(), sig);
         self.translate(fun)?;
 
@@ -162,32 +119,31 @@ impl Jit {
         Ok(code)
     }
 
-    fn translate(&mut self, fun: crate::function::Function) -> Result<()> {
-        if fun.foldable() {
-            self.ctx
-                .func
-                .signature
-                .params
-                .push(AbiParam::new(types::F64));
-            self.ctx
-                .func
-                .signature
-                .params
-                .push(AbiParam::new(types::F64))
-        } else {
-            for _p in fun.args() {
+    fn translate(&mut self, fun: DefunExpr) -> Result<()> {
+        // Return slot
+        self.ctx
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(types::R64));
+        match &fun.args {
+            Args::Foldable => {
                 self.ctx
                     .func
                     .signature
                     .params
-                    .push(AbiParam::new(types::F64))
+                    .extend([AbiParam::new(types::R64), AbiParam::new(types::R64)]);
+            }
+            Args::Arglist(args) => {
+                for _ in args {
+                    self.ctx
+                        .func
+                        .signature
+                        .params
+                        .push(AbiParam::new(types::R64))
+                }
             }
         }
-        self.ctx
-            .func
-            .signature
-            .returns
-            .push(AbiParam::new(types::F64));
 
         let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_ctx);
 
@@ -205,8 +161,20 @@ impl Jit {
             fun_lookup: &self.fun_lookup,
         };
 
-        let return_value = trans.translate_expr(fun.body());
-        trans.builder.ins().return_(&[return_value]);
+        let return_value = trans.translate_expr(fun.body);
+        let tag = trans.builder.ins().iconst(types::I64, 1);
+        let return_slot = trans
+            .builder
+            .use_var(*trans.variables.get("ret").expect("Undefined variable"));
+        let mut memflags = MemFlags::new();
+        memflags.set_aligned();
+        // here we should write return_value to the return slot
+        trans.builder.ins().store(memflags, return_slot, tag, 0);
+        trans
+            .builder
+            .ins()
+            .store(memflags, return_slot, return_value, 8);
+        trans.builder.ins().return_(&[]);
         trans.builder.finalize();
 
         if self.show_clir {
@@ -221,7 +189,7 @@ struct FunctionTranslator<'a, 'e> {
     builder: FunctionBuilder<'a>,
     variables: HashMap<String, Variable>,
     module: &'a mut JITModule,
-    fun_lookup: &'e FnvHashMap<String, crate::function::Signature>,
+    fun_lookup: &'e FnvHashMap<String, Args>,
 }
 
 impl<'a, 'e> FunctionTranslator<'a, 'e> {
@@ -241,14 +209,14 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
                 }
             }
             Expr::List(exprs, _) => {
-                let mut list_ret = self.builder.ins().f64const(0);
+                let mut list_ret = self.builder.ins().iconst(types::I64, 0);
                 for expr in exprs {
                     list_ret = self.translate_expr(expr);
                 }
                 list_ret
             }
             Expr::Quoted(_, _) => todo!("dunno"),
-            Expr::Defun(_, _, _, _, _) => todo!("dunno"),
+            Expr::Defun(..) => todo!("dunno"),
             Expr::If(cond, truth, lie, _) => self.translate_if(*cond, *truth, *lie),
             Expr::Return(_, _) => {
                 let cond_var = *self.variables.get("loop_cond").unwrap();
@@ -258,7 +226,8 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
             }
             Expr::Loop(expr, _) => self.translate_loop(*expr),
             Expr::Let(name, expr, _) => self.translate_let(name, *expr),
-            _ => todo!(),
+            Expr::Integer(int, _) => self.builder.ins().iconst(types::I64, int),
+            Expr::String(_, _) => todo!(),
         }
     }
 
@@ -299,15 +268,20 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
         let signature = self.fun_lookup.get(&name).expect("Undefined function");
 
         let mut sig = self.module.make_signature();
-        if signature.foldable() {
-            sig.params.push(AbiParam::new(types::F64));
-            sig.params.push(AbiParam::new(types::F64));
-        } else {
-            for _arg in &signature.args() {
-                sig.params.push(AbiParam::new(types::F64));
+
+        // Return slot
+        sig.params.push(AbiParam::new(types::R64));
+        match signature {
+            Args::Foldable => {
+                sig.params.push(AbiParam::new(types::R64));
+                sig.params.push(AbiParam::new(types::R64));
+            }
+            Args::Arglist(args) => {
+                for _ in args {
+                    sig.params.push(AbiParam::new(types::R64));
+                }
             }
         }
-        sig.returns.push(AbiParam::new(types::F64));
 
         // Yanked straight from JIT demo
         // TODO: Streamline the API here?
@@ -315,16 +289,21 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
             .module
             .declare_function(&name, Linkage::Import, &sig)
             .expect("problem declaring function");
-        let local_callee = self
-            .module
-            .declare_func_in_func(callee, &mut self.builder.func);
+        let local_callee = self.module.declare_func_in_func(callee, self.builder.func);
 
         let mut arg_values = Vec::new();
+        // allocate return slot
+        let ret = self.builder.ins().null(types::R64);
+        arg_values.push(ret);
+
         for arg in exprs {
-            arg_values.push(self.translate_expr(arg))
+            let ret = self.builder.ins().null(types::R64);
+            arg_values.push(ret);
+            //arg_values.push(self.translate_expr(arg))
         }
         let call = self.builder.ins().call(local_callee, &arg_values);
-        self.builder.inst_results(call)[0]
+        self.builder.inst_results(call);
+        self.builder.ins().iconst(types::I64, 0)
     }
 
     fn translate_let(&mut self, name: String, expr: Expr) -> Value {
@@ -366,29 +345,35 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
 
 fn declare_variables(
     builder: &mut FunctionBuilder,
-    fun: &crate::function::Function,
+    fun: &DefunExpr,
     block: Block,
 ) -> HashMap<String, Variable> {
     let mut variables = HashMap::new();
     let mut index = 0;
+    let val = builder.block_params(block)[0];
+    let var = declare_variable(types::R64, builder, &mut variables, &mut index, "ret");
+    builder.def_var(var, val);
 
-    if fun.foldable() {
-        let val = builder.block_params(block)[0];
-        let var = declare_variable(types::F64, builder, &mut variables, &mut index, "a");
-        builder.def_var(var, val);
-
-        let val = builder.block_params(block)[1];
-        let var = declare_variable(types::F64, builder, &mut variables, &mut index, "b");
-        builder.def_var(var, val);
-    } else {
-        for (i, (name, _ty)) in fun.args().iter().enumerate() {
-            let val = builder.block_params(block)[i];
-            let var = declare_variable(types::F64, builder, &mut variables, &mut index, name);
+    match &fun.args {
+        Args::Foldable => {
+            let val = builder.block_params(block)[1];
+            let var = declare_variable(types::R64, builder, &mut variables, &mut index, "a");
             builder.def_var(var, val);
+
+            let val = builder.block_params(block)[2];
+            let var = declare_variable(types::R64, builder, &mut variables, &mut index, "b");
+            builder.def_var(var, val);
+        }
+        Args::Arglist(args) => {
+            for (i, name) in args.iter().enumerate() {
+                let val = builder.block_params(block)[i];
+                let var = declare_variable(types::R64, builder, &mut variables, &mut index, name);
+                builder.def_var(var, val);
+            }
         }
     }
 
-    declare_variables_in_expr(fun.body(), builder, &mut variables, &mut index);
+    declare_variables_in_expr(fun.body.clone(), builder, &mut variables, &mut index);
     variables
 }
 
@@ -407,7 +392,7 @@ fn declare_variables_in_expr(
             }
         }
         Expr::Quoted(_, _) => (),
-        Expr::Defun(_, _, _, _, _) => todo!("Not sure what to do"),
+        Expr::Defun(..) => todo!("Not sure what to do"),
         Expr::If(cond, truth, lie, _) => {
             for expr in [*cond, *truth, *lie] {
                 declare_variables_in_expr(expr, builder, variables, index)
@@ -426,7 +411,7 @@ fn declare_variables_in_expr(
             declare_variable(types::F64, builder, variables, index, &name);
             declare_variables_in_expr(*expr, builder, variables, index)
         }
-        Expr::Integer(_, _) => todo!(),
+        Expr::Integer(_, _) => (),
         Expr::String(_, _) => todo!(),
     }
 }

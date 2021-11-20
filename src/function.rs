@@ -4,132 +4,104 @@ use crate::{
     errors,
     eval::Value,
     jit::Jit,
-    parser::{Arglist, Expr},
+    parser::{Arglist, Args, DefunExpr, Expr},
     CranelispError, EvalError, Result,
 };
 use std::{fmt::Debug, str::FromStr};
 
 #[derive(Clone)]
-pub struct Function {
-    sig: Signature,
-    body: FnBody,
+pub struct Func {
+    arity: usize,
+    body: *const u8,
+}
+impl Func {
+    pub fn from_fn(fun: extern "C" fn(&mut Value, &Value, &Value)) -> Self {
+        Self {
+            arity: usize::MAX,
+            body: fun as _,
+        }
+    }
 }
 
+// extern "C" fn does not implement FnMut
 macro_rules! transmute {
-    ($ptr:expr; $($typ:tt),+ => $ret:tt) => {
-        std::mem::transmute::<*const u8, extern "C" fn($($typ),+) -> $ret>($ptr)
+    ($ptr:expr; $($typ:ty),+) => {
+        std::mem::transmute::<*const u8, extern "C" fn(*mut Value, $(&$typ),+)>($ptr)
     };
-    ($ptr:expr; => $ret:tt) => {
-        std::mem::transmute::<*const u8, extern "C" fn() -> $ret>($ptr)
+    ($ptr:expr) => {
+        std::mem::transmute::<*const u8, extern "C" fn(*mut Value)>($ptr)
     };
 }
 
 macro_rules! call {
     ($args:expr; $fn:expr; $($n:literal),+) => {
         {
-            $fn($($args[$n]),+)
+            let mut ret = Value::NULL;
+            $fn(&mut ret, $(&$args[$n]),+);
+            ret
+        }
+    };
+    ($fn:expr) => {
+        {
+            let mut ret = Value::NULL;
+            $fn(&mut ret);
+            ret
         }
     };
 }
 
-impl Function {
-    pub fn new(sig: Signature, body: FnBody) -> Self {
-        Self { sig, body }
+impl Func {
+    pub fn jit(jit: &mut Jit, defun: DefunExpr) -> Result<Self> {
+        let arity = match &defun.args {
+            Args::Foldable => usize::MAX,
+            Args::Arglist(a) => a.len(),
+        };
+        let body = jit.compile(defun)?;
+        Self { arity, body }.okay()
     }
-    pub fn jit(self, jit: &mut Jit) -> Result<Self> {
-        let sig = self.sig.clone();
-        let body = jit.compile(self)?;
-        let body = FnBody::Native(body);
-        Function { sig, body }.okay()
-    }
-    pub fn args(&self) -> Vec<(String, Type)> {
-        self.sig.args()
-    }
-
-    pub fn signature(&self) -> Signature {
-        self.sig.clone()
-    }
-
-    pub fn name(&self) -> String {
-        self.sig.name.clone()
-    }
-    pub fn body(&self) -> Expr {
-        match &self.body {
-            FnBody::Native(_) => todo!(),
-            FnBody::Virtual(e) => e.clone(),
-        }
-    }
-
     pub fn foldable(&self) -> bool {
-        self.sig.foldable()
+        self.arity == usize::MAX
     }
 
-    pub fn arity(&self) -> usize {
-        self.sig.arity()
-    }
     pub fn call(&self, args: Vec<Value>) -> Result<Value> {
-        if self.arity() > args.len() && self.arity() != usize::MAX {
+        if self.arity > args.len() && self.arity != usize::MAX {
             return errors::eval(EvalError::ArityMismatch);
         }
-        match &self.body {
-            FnBody::Virtual(expr) => {
-                errors::eval(EvalError::UnexpectedVirtualFunction(expr.span()))
-            }
-            FnBody::Native(ptr) => unsafe {
-                let args: Vec<_> = args.into_iter().map(|v| v.unwrap_float()).collect();
-                match self.arity() {
-                    0 => {
-                        let func = transmute!(*ptr; => f64);
-                        let val = func();
-                        Value::Float(val).okay()
-                    }
-                    1 => {
-                        let func = transmute!(*ptr; f64 => f64);
-                        let val = call!(args; func; 0);
-                        Value::Float(val).okay()
-                    }
-                    2 => {
-                        let func = transmute!(*ptr; f64,f64 => f64);
-                        let val = call!(args; func; 0, 1);
-                        Value::Float(val).okay()
-                    }
-                    3 => {
-                        let func = transmute!(*ptr; f64,f64,f64 => f64);
-                        let val = call!(args; func; 0, 1, 2);
-                        Value::Float(val).okay()
-                    }
-                    usize::MAX => {
-                        let func = transmute!(*ptr; f64,f64 => f64);
-                        #[allow(clippy::redundant_closure)]
-                        // extern "C" fn does not implement FnMut
-                        let result = args
-                            .into_iter()
-                            .reduce(|acc, n| func(acc, n))
-                            .unwrap_or(0.0);
-                        Value::Float(result).okay()
-                    }
-                    arity => todo!("arity: {}", arity),
+        unsafe {
+            match self.arity {
+                0 => {
+                    let func = transmute!(self.body);
+                    call!(func).okay()
                 }
-            },
+                1 => {
+                    let func = transmute!(self.body; Value);
+                    call!(args; func; 0).okay()
+                }
+                2 => {
+                    let func = transmute!(self.body; Value, Value);
+                    call!(args; func; 0, 1).okay()
+                }
+                3 => {
+                    let func = transmute!(self.body; Value, Value, Value);
+                    call!(args; func; 0, 1, 2).okay()
+                }
+                usize::MAX => {
+                    let func = transmute!(self.body; Value, Value);
+                    #[allow(clippy::redundant_closure)]
+                    args.into_iter()
+                        .reduce(|acc, n| call!([acc, n]; func; 0, 1))
+                        .unwrap_or(Value::NULL)
+                        .okay()
+                }
+                arity => todo!("arity: {}", arity),
+            }
         }
     }
 }
 
-impl Debug for Function {
+impl Debug for Func {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.body {
-            FnBody::Native(_) => writeln!(f, "Native function")?,
-            FnBody::Virtual(e) => writeln!(f, "Virtual function \n{:#?}", e.clone().unwrap_list())?,
-        };
-        match &self.sig.args {
-            FnArgs::Arglist(args) => writeln!(
-                f,
-                "{:?} => {:?}",
-                args.iter().map(|(_, t)| t).collect::<Vec<_>>(),
-                self.sig.ret
-            ),
-            FnArgs::Foldable(ty) => writeln!(f, "*{:?} => {:?}", ty, self.sig.ret),
-        }
+        writeln!(f, "Native function")
     }
 }
 
@@ -147,53 +119,42 @@ pub enum FnArgs {
 
 #[derive(Clone, Debug)]
 pub struct Signature {
-    pub args: FnArgs,
-    pub ret: Type,
+    pub args: Vec<String>,
     pub name: String,
+    pub foldable: bool,
 }
 
 pub struct SignatureBuilder {
-    args: Vec<(String, Type)>,
-    ret: Option<Type>,
+    args: Vec<String>,
     name: Option<String>,
-    foldable_type: Option<Type>,
+    foldable: bool,
 }
 impl SignatureBuilder {
-    pub fn set_ret(mut self, t: Type) -> Self {
-        self.ret = Some(t);
-        self
-    }
-    pub fn set_foldable(mut self, ty: Type) -> Self {
-        self.foldable_type = ty.some();
+    pub fn set_foldable(mut self, foldable: bool) -> Self {
+        self.foldable = foldable;
         self
     }
     pub fn set_name(mut self, n: String) -> Self {
         self.name = Some(n);
         self
     }
-    pub fn push_arg(mut self, arg: (String, Type)) -> Self {
+    pub fn push_arg(mut self, arg: String) -> Self {
         self.args.push(arg);
         self
     }
     pub fn finish(self) -> Result<Signature> {
-        let ret = self.ret.ok_or_else(|| {
-            CranelispError::Eval(EvalError::InvalidSignature("Missing return type".into()))
-        })?;
         let name = self.name.ok_or_else(|| {
             CranelispError::Eval(EvalError::InvalidSignature("Missing name".into()))
         })?;
-        if self.foldable_type.is_some() {
-            Signature {
-                args: FnArgs::Foldable(self.foldable_type.unwrap()),
-                ret,
-                name,
-            }
+        let args = if self.foldable {
+            vec!["a".into(), "b".into()]
         } else {
-            Signature {
-                args: FnArgs::Arglist(self.args),
-                ret,
-                name,
-            }
+            self.args
+        };
+        Signature {
+            args,
+            name,
+            foldable: self.foldable,
         }
         .okay()
     }
@@ -203,40 +164,28 @@ impl Signature {
     pub fn build() -> SignatureBuilder {
         SignatureBuilder {
             args: vec![],
-            ret: None,
             name: None,
-            foldable_type: None,
+            foldable: false,
         }
     }
-
-    pub fn build_from_arglist(args: Arglist) -> SignatureBuilder {
+    pub fn build_from_arglist(args: Vec<String>) -> SignatureBuilder {
         SignatureBuilder {
             args,
-            ret: None,
             name: None,
-            foldable_type: None,
+            foldable: false,
         }
     }
 
     pub fn arity(&self) -> usize {
-        match &self.args {
-            FnArgs::Arglist(args) => args.len(),
-            FnArgs::Foldable(_) => usize::MAX,
+        if self.foldable {
+            usize::MAX
+        } else {
+            self.args.len()
         }
     }
 
-    pub fn args(&self) -> Arglist {
-        match &self.args {
-            FnArgs::Arglist(args) => args.clone(),
-            FnArgs::Foldable(t) => vec![("a".into(), *t), ("b".into(), *t)],
-        }
-    }
-
-    pub fn foldable(&self) -> bool {
-        match &self.args {
-            FnArgs::Arglist(_) => false,
-            FnArgs::Foldable(_) => true,
-        }
+    pub fn args(&self) -> Vec<String> {
+        self.args.clone()
     }
 }
 

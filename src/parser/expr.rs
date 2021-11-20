@@ -1,7 +1,19 @@
-use super::FnArgs;
-use crate::function::Type;
 use crate::Span;
 use std::fmt::{Debug, Display};
+
+#[derive(Debug, Clone)]
+pub enum Args {
+    Foldable,
+    Arglist(Vec<String>),
+}
+
+#[derive(Debug, Clone)]
+pub struct DefunExpr {
+    pub name: String,
+    pub args: Args,
+    pub body: Expr,
+}
+
 #[derive(Clone)]
 pub enum Expr {
     Symbol(String, Span),
@@ -9,7 +21,7 @@ pub enum Expr {
     Integer(i64, Span),
     List(Vec<Expr>, Span),
     Quoted(Box<Expr>, Span),
-    Defun(String, FnArgs, Box<Expr>, Type, Span),
+    Defun(Box<DefunExpr>, Span),
     If(Box<Expr>, Box<Expr>, Box<Expr>, Span),
     Return(Option<Box<Expr>>, Span),
     Loop(Box<Expr>, Span),
@@ -32,13 +44,10 @@ impl Debug for Expr {
                 Self::Quoted(arg0, arg1) => {
                     f.debug_tuple("Quoted").field(arg0).field(arg1).finish()
                 }
-                Self::Defun(name, arg0, arg1, arg2, arg3) => f
+                Self::Defun(defun_expr, span) => f
                     .debug_tuple("Defun")
-                    .field(name)
-                    .field(arg0)
-                    .field(arg1)
-                    .field(arg2)
-                    .field(arg3)
+                    .field(defun_expr)
+                    .field(span)
                     .finish(),
                 Self::If(arg0, arg1, arg2, arg3) => f
                     .debug_tuple("If")
@@ -69,12 +78,7 @@ impl Debug for Expr {
                 Self::Integer(arg0, ..) => f.debug_tuple("Integer").field(arg0).finish(),
                 Self::List(arg0, ..) => f.debug_tuple("List").field(arg0).finish(),
                 Self::Quoted(arg0, ..) => f.debug_tuple("Quoted").field(arg0).finish(),
-                Self::Defun(arg0, arg1, arg2, ..) => f
-                    .debug_tuple("Defun")
-                    .field(arg0)
-                    .field(arg1)
-                    .field(arg2)
-                    .finish(),
+                Self::Defun(defun_expr, ..) => f.debug_tuple("Defun").field(defun_expr).finish(),
                 Self::If(arg0, arg1, arg2, ..) => f
                     .debug_tuple("If")
                     .field(arg0)
@@ -99,7 +103,7 @@ impl Display for Expr {
             Expr::Integer(_, _) => write!(f, "Integer"),
             Expr::List(_, _) => write!(f, "List"),
             Expr::Quoted(q, _) => write!(f, "Quoted {}", &*q),
-            Expr::Defun(_, _, _, _, _) => write!(f, "Defun"),
+            Expr::Defun(..) => write!(f, "Defun"),
             Expr::If(_, _, _, _) => write!(f, "If"),
             Expr::Return(_, _) => write!(f, "Break"),
             Expr::Loop(_, _) => write!(f, "Loop"),
@@ -133,7 +137,7 @@ impl Expr {
             Expr::Integer(_, _) => true,
             Expr::List(_, _) => true,
             Expr::Quoted(_, _) => todo!(),
-            Expr::Defun(_, _, _, _, _) => false,
+            Expr::Defun(..) => false,
             Expr::If(_, _, _, _) => true,
             Expr::Return(_, _) => todo!(),
             Expr::Loop(_, _) => todo!(),

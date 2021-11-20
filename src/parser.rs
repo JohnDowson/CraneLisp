@@ -4,9 +4,8 @@ use crate::lexer::{Lexer, Token};
 use crate::{CranelispError, Result, Span};
 use somok::Somok;
 mod expr;
-use crate::function::FnArgs;
 use crate::function::Type;
-pub use expr::Expr;
+pub use expr::{Args, DefunExpr, Expr};
 pub type Arglist = Vec<(String, Type)>;
 
 pub struct Parser<'l> {
@@ -20,42 +19,39 @@ impl<'l> Parser<'l> {
 
     pub fn parse_expr(&mut self) -> Result<Expr> {
         match self.lexer.next_token()? {
-            token if token.is_rparen() => {
-                syntax!(UnexpectedToken, (token.span, "Unexpected rparen".into())).error()
+            Token::RParen(span) => {
+                syntax!(UnexpectedToken, (span, "Unexpected rparen".into())).error()
             }
 
-            token if token.is_float() => {
-                let expr = Expr::Float(token.extract_float()?, token.span);
+            Token::Float(f, span) => {
+                let expr = Expr::Float(f, span);
                 expr.okay()
             }
-            token if token.is_integer() => {
-                let expr = Expr::Integer(token.extract_integer()?, token.span);
+            Token::Integer(i, span) => {
+                let expr = Expr::Integer(i, span);
                 expr.okay()
             }
 
-            token if token.is_lparen() => {
+            token @ Token::LParen(..) => {
                 self.skip_whitespace()?;
                 match self.lexer.peek_token()? {
-                    t if t.is_symbol() => match &*t.extract_symbol()? {
+                    t if matches!(t, Token::Symbol(..)) => match &*t.extract_symbol() {
                         "defun" => {
                             self.lexer.next_token()?;
                             self.skip_whitespace()?;
                             let name = self.eat_symbol()?;
-                            self.skip_whitespace()?;
-                            self.eat_type_separator()?;
-                            self.skip_whitespace()?;
-                            let ty = self.eat_type()?;
                             self.skip_whitespace()?;
                             let args = self.eat_arglist()?;
                             let expr = self.parse_expr()?;
                             self.skip_whitespace()?;
                             let rparen = self.eat_rparen()?;
                             Expr::Defun(
-                                name,
-                                args,
-                                Box::new(expr),
-                                ty,
-                                Span::merge(token.span, rparen.span),
+                                Box::new(DefunExpr {
+                                    name,
+                                    args,
+                                    body: expr,
+                                }),
+                                Span::merge(token.span(), rparen.span()),
                             )
                             .okay()
                         }
@@ -64,13 +60,14 @@ impl<'l> Parser<'l> {
                             let expr = self.parse_expr()?;
                             self.skip_whitespace()?;
                             let rparen = self.eat_rparen()?;
-                            Expr::Loop(Box::new(expr), Span::merge(token.span, rparen.span)).okay()
+                            Expr::Loop(Box::new(expr), Span::merge(token.span(), rparen.span()))
+                                .okay()
                         }
                         "return" => {
                             self.lexer.next_token()?;
                             self.skip_whitespace()?;
                             let rparen = self.eat_rparen()?;
-                            Expr::Return(None, Span::merge(token.span, rparen.span)).okay()
+                            Expr::Return(None, Span::merge(token.span(), rparen.span())).okay()
                         }
                         "let" => {
                             self.lexer.next_token()?;
@@ -78,8 +75,12 @@ impl<'l> Parser<'l> {
                             let expr = self.parse_expr()?;
                             self.skip_whitespace()?;
                             let rparen = self.eat_rparen()?;
-                            Expr::Let(name, Box::new(expr), Span::merge(token.span, rparen.span))
-                                .okay()
+                            Expr::Let(
+                                name,
+                                Box::new(expr),
+                                Span::merge(token.span(), rparen.span()),
+                            )
+                            .okay()
                         }
                         "if" => {
                             self.lexer.next_token()?;
@@ -96,7 +97,7 @@ impl<'l> Parser<'l> {
                                     Box::new(cond),
                                     Box::new(truth),
                                     Box::new(lie),
-                                    Span::merge(token.span, rparen.span),
+                                    Span::merge(token.span(), rparen.span()),
                                 )
                                 .okay(),
                                 (true, true, false) => syntax!(
@@ -182,29 +183,26 @@ impl<'l> Parser<'l> {
                     _ => self.parse_list(token),
                 }
             }
-            token if token.is_quote() => {
+            token @ Token::Quote(..) => {
                 let expr = self.parse_expr()?;
                 let expr_span = expr.span();
-                Expr::Quoted(Box::new(expr), Span::merge(token.span, expr_span)).okay()
+                Expr::Quoted(Box::new(expr), Span::merge(token.span(), expr_span)).okay()
             }
 
-            token if token.is_symbol() => {
-                let expr = Expr::Symbol(token.extract_symbol()?, token.span);
+            Token::Symbol(sym, span) => {
+                let expr = Expr::Symbol(sym, span);
                 expr.okay()
             }
 
-            token if token.is_string() => Expr::String(token.extract_string()?, token.span).okay(),
+            Token::String(string, span) => Expr::String(string, span).okay(),
 
-            token if token.is_type_separator() => syntax!(
-                UnexpectedToken,
-                (token.span, "Unexpected type separator".into())
-            )
-            .error(),
+            Token::TypeSeparator(span) => {
+                syntax!(UnexpectedToken, (span, "Unexpected type separator".into())).error()
+            }
 
-            token if token.is_whitespace() => self.parse_expr(),
+            Token::Whitespace(..) => self.parse_expr(),
 
-            token if token.is_eof() => CranelispError::EOF.error(),
-            what => panic!("{:?}", what),
+            Token::Eof(..) => CranelispError::EOF.error(),
         }
     }
 
@@ -224,7 +222,11 @@ impl<'l> Parser<'l> {
         match self.lexer.next_token()? {
             token if token.is_lparen() => token.okay(),
             token if token.is_whitespace() => self.eat_lparen(),
-            token => syntax!(UnexpectedToken, (token.span, "LParen expected here".into())).error(),
+            token => syntax!(
+                UnexpectedToken,
+                (token.span(), "LParen expected here".into())
+            )
+            .error(),
         }
     }
 
@@ -232,29 +234,36 @@ impl<'l> Parser<'l> {
         match self.lexer.next_token()? {
             token if token.is_rparen() => token.okay(),
             token if token.is_whitespace() => self.eat_rparen(),
-            token => syntax!(UnexpectedToken, (token.span, "RParen expected here".into())).error(),
-        }
-    }
-
-    fn eat_type(&mut self) -> Result<Type> {
-        match self.lexer.next_token()? {
-            token if token.is_symbol() => Type::from_str(&token.extract_symbol()?)?.okay(),
-            token if token.is_whitespace() => self.eat_type(),
             token => syntax!(
                 UnexpectedToken,
-                (token.span, format!("Type expected here, found {:?}", token))
+                (token.span(), "RParen expected here".into())
             )
             .error(),
         }
     }
 
-    fn eat_type_separator(&mut self) -> Result<()> {
+    fn _eat_type(&mut self) -> Result<Type> {
         match self.lexer.next_token()? {
-            token if token.is_type_separator() => ().okay(),
+            Token::Symbol(sym, ..) => Type::from_str(&sym)?.okay(),
+            Token::Whitespace(..) => self._eat_type(),
             token => syntax!(
                 UnexpectedToken,
                 (
-                    token.span,
+                    token.span(),
+                    format!("Type expected here, found {:?}", token)
+                )
+            )
+            .error(),
+        }
+    }
+
+    fn _eat_type_separator(&mut self) -> Result<()> {
+        match self.lexer.next_token()? {
+            Token::TypeSeparator(..) => ().okay(),
+            token => syntax!(
+                UnexpectedToken,
+                (
+                    token.span(),
                     format!("Type separator expected here, found {:?}", token)
                 )
             )
@@ -264,40 +273,40 @@ impl<'l> Parser<'l> {
 
     fn eat_symbol(&mut self) -> Result<String> {
         match self.lexer.next_token()? {
-            token if token.is_symbol() => token.extract_symbol(),
+            Token::Symbol(sym, ..) => sym.okay(),
             token if token.is_whitespace() => self.eat_symbol(),
-            token => syntax!(UnexpectedToken, (token.span, "Symbol expected here".into())).error(),
+            token => syntax!(
+                UnexpectedToken,
+                (token.span(), "Symbol expected here".into())
+            )
+            .error(),
         }
     }
 
-    fn eat_arglist(&mut self) -> Result<FnArgs> {
-        let mut arglist: Arglist = Vec::new();
+    fn eat_arglist(&mut self) -> Result<Args> {
+        let mut arglist = Vec::new();
         let _lparen = self.eat_lparen()?;
         loop {
             let symbol = match self.lexer.next_token()? {
-                token if token.is_rparen() => return FnArgs::Arglist(arglist).okay(),
-                token if token.is_symbol() && token.extract_symbol()? == "*" => {
-                    self.skip_whitespace()?;
-                    self.eat_type_separator()?;
-                    self.skip_whitespace()?;
-                    let ty = self.eat_type()?;
+                Token::RParen(..) => return Args::Arglist(arglist).okay(),
+                Token::Symbol(sym, ..) if sym == "*" => {
                     self.skip_whitespace()?;
                     self.eat_rparen()?;
-                    return FnArgs::Foldable(ty).okay();
+                    return Args::Foldable.okay();
                 }
-                token if token.is_symbol() => token.extract_symbol()?,
+                Token::Symbol(sym, ..) => sym,
 
-                token if token.is_whitespace() => continue,
+                Token::Whitespace(..) => continue,
                 token => {
-                    return syntax!(UnexpectedToken, (token.span, "Symbol expected here".into()))
-                        .error()
+                    return syntax!(
+                        UnexpectedToken,
+                        (token.span(), "Symbol expected here".into())
+                    )
+                    .error()
                 }
             };
             self.skip_whitespace()?;
-            self.eat_type_separator()?;
-            self.skip_whitespace()?;
-            let ty = self.eat_type()?;
-            arglist.push((symbol, ty));
+            arglist.push(symbol);
         }
     }
 
@@ -311,13 +320,13 @@ impl<'l> Parser<'l> {
                 }
                 token if token.is_rparen() => {
                     self.lexer.next_token()?;
-                    return Expr::List(exprs, Span::merge(first_token.span, token.span)).okay();
+                    return Expr::List(exprs, Span::merge(first_token.span(), token.span())).okay();
                 }
                 token if token.is_eof() => {
                     return syntax!(
                         UnmatchedParen,
-                        (first_token.span, "".into()),
-                        (token.span, "expected here".into())
+                        (first_token.span(), "".into()),
+                        (token.span(), "expected here".into())
                     )
                     .error();
                 }

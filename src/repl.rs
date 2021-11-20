@@ -2,11 +2,11 @@ use std::{fs::File, io::Read, time::Instant};
 
 use cranelisp::{
     eval::Value,
-    function::{FnBody, Function, Signature, Type},
+    function::Func,
     jit::Jit,
+    libcl::{add, sub},
     Env,
 };
-use fnv::FnvHashMap;
 use rustyline::{
     validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
     Config, EditMode,
@@ -28,62 +28,12 @@ impl Validator for InputValidator {
 }
 
 fn eval_env() -> Env {
-    let mut env = FnvHashMap::default();
-    let func = Function::new(
-        Signature::build()
-            .push_arg(("a".into(), Type::Float))
-            .set_name("cl_print".into())
-            .set_ret(Type::Float)
-            .finish()
-            .unwrap(),
-        FnBody::Native(crate::libcl::cl_print as *const u8),
-    );
-    env.insert("cl_print".into(), Value::Func(func));
-
-    let func = Function::new(
-        Signature::build()
-            .set_foldable(Type::Float)
-            .set_name("+".into())
-            .set_ret(Type::Float)
-            .finish()
-            .unwrap(),
-        FnBody::Native(crate::libcl::plus as *const u8),
-    );
-    env.insert("+".into(), Value::Func(func));
-
-    let func = Function::new(
-        Signature::build()
-            .set_foldable(Type::Float)
-            .set_name("-".into())
-            .set_ret(Type::Float)
-            .finish()
-            .unwrap(),
-        FnBody::Native(crate::libcl::minus as *const u8),
-    );
-    env.insert("-".into(), Value::Func(func));
-
-    let func = Function::new(
-        Signature::build()
-            .set_foldable(Type::Float)
-            .set_name("<".into())
-            .set_ret(Type::Float)
-            .finish()
-            .unwrap(),
-        FnBody::Native(crate::libcl::less_than as *const u8),
-    );
-    env.insert("<".into(), Value::Func(func));
-
-    let func = Function::new(
-        Signature::build()
-            .set_foldable(Type::Float)
-            .set_name(">".into())
-            .set_ret(Type::Float)
-            .finish()
-            .unwrap(),
-        FnBody::Native(crate::libcl::more_than as *const u8),
-    );
-    env.insert(">".into(), Value::Func(func));
-    env
+    [
+        ("+".to_string(), Value::new_func(Func::from_fn(add))),
+        ("-".to_string(), Value::new_func(Func::from_fn(sub))),
+    ]
+    .into_iter()
+    .collect()
 }
 
 pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
@@ -109,7 +59,7 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
             break;
         }
         let t1 = Instant::now();
-        let mut lexer = match Lexer::new(src.clone(), "repl") {
+        let mut lexer = match Lexer::new(src.clone()) {
             Ok(l) => l,
             Err(e) => {
                 provide_diagnostic(&e, src);
@@ -162,7 +112,7 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> R
     jit.show_clir = clir;
 
     let t1 = Instant::now();
-    let mut lexer = match Lexer::new(src.clone(), "repl") {
+    let mut lexer = match Lexer::new(src.clone()) {
         Ok(l) => l,
         Err(e) => {
             provide_diagnostic(&e, src);
