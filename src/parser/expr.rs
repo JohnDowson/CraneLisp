@@ -9,14 +9,14 @@ pub enum Args {
 
 #[derive(Debug, Clone)]
 pub struct DefunExpr {
-    pub name: String,
+    pub name: usize,
     pub args: Args,
     pub body: Expr,
 }
 
 #[derive(Clone)]
 pub enum Expr {
-    Symbol(String, Span),
+    Symbol(usize, Span),
     Float(f64, Span),
     Integer(i64, Span),
     List(Vec<Expr>, Span),
@@ -25,7 +25,7 @@ pub enum Expr {
     If(Box<Expr>, Box<Expr>, Box<Expr>, Span),
     Return(Option<Box<Expr>>, Span),
     Loop(Box<Expr>, Span),
-    Let(String, Box<Expr>, Span),
+    Let(usize, Box<Expr>, Span),
     String(String, Span),
 }
 
@@ -184,14 +184,14 @@ impl Expr {
         }
     }
 
-    /// Returns inner sumbol
-    /// Panics if `self` is not [`Symbol`].
-    ///
-    /// [`Symbol`]: Expr::Symbol
-    pub fn unwrap_symbol(self) -> String {
-        match self {
-            Expr::Symbol(v, _) => v,
-            _ => panic!("Called `as_symbol` on non-Symbol instance of Expr"),
-        }
-    }
+    // /// Returns inner sumbol
+    // /// Panics if `self` is not [`Symbol`].
+    // ///
+    // /// [`Symbol`]: Expr::Symbol
+    // pub fn unwrap_symbol(self) -> String {
+    //     match self {
+    //         Expr::Symbol(v, _) => v,
+    //         _ => panic!("Called `as_symbol` on non-Symbol instance of Expr"),
+    //     }
+    // }
 }

@@ -33,9 +33,29 @@ use eval::Value;
 use fnv::FnvHashMap;
 use somok::Somok;
 
-pub type Env = FnvHashMap<String, Value>;
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
 
+#[derive(Default)]
+pub struct Env {
+    pub env: FnvHashMap<usize, Value>,
+    pub symbols: Vec<String>,
+}
+
+impl Env {
+    pub fn insert_symbol(&mut self, sym: String) -> usize {
+        self.symbols
+            .iter()
+            .position(|s| s == &sym)
+            .unwrap_or_else(|| {
+                let id = self.symbols.len();
+                self.symbols.push(sym);
+                id
+            })
+    }
+    pub fn lookup_symbol(&self, sym_id: usize) -> Option<&String> {
+        self.symbols.get(sym_id)
+    }
+}
 trait TryRemove {
     type Item;
     fn try_remove(&mut self, i: usize) -> Option<Self::Item>;

@@ -21,21 +21,6 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    fn test_value() {
-        use cranelisp::eval::value::*;
-
-        let vals = cons(
-            Value::new_float(1.1),
-            cons(Value::new_float(2.1), Value::new_int(3)),
-        );
-
-        println!("Values: {:?}", vals);
-        println!("Head: {:?}", head(vals));
-        println!("Tail: {:?}", tail(vals));
-        panic!()
-    }
-    //test_value();
-
     let args = Args::parse();
     if let Some(source) = args.source {
         eval_source(

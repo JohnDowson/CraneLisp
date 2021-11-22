@@ -7,87 +7,94 @@ use std::collections::HashMap;
 //use std::slice;
 
 use crate::parser::{Args, DefunExpr, Expr};
-use crate::{libcl::*, Result};
+use crate::{libcl::*, Env, Result};
 
-pub struct Jit {
+pub struct Jit<'e> {
     builder_ctx: FunctionBuilderContext,
     ctx: codegen::Context,
     // data_ctx: DataContext,
     module: JITModule,
-    fun_lookup: FnvHashMap<String, Args>,
+    fun_lookup: FnvHashMap<usize, Args>,
+    show_clir: bool,
+    pub env: &'e mut Env,
+}
+
+pub struct JitBuilder {
+    fun_lookup: FnvHashMap<usize, Args>,
     pub show_clir: bool,
 }
 
 macro_rules! defsym {
     // Named
-    ($builder:expr; $sym:expr => $fun:path) => {
+    ($builder:expr; $env:expr;  $fun_lookup:expr; BINARY $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
+        let id = $env.insert_symbol($sym);
+        $fun_lookup.insert(id, Args::Arglist(vec!["a".into(), "b".into()]));
     };
-    ($builder:expr; $fun_lookup:expr; BINARY $sym:expr => $fun:path) => {
+    ($builder:expr; $env:expr; $fun_lookup:expr; VARARG $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
-        $fun_lookup.insert($sym.into(), Args::Arglist(vec!["a".into(), "b".into()]));
+        let id = $env.insert_symbol($sym);
+        $fun_lookup.insert(id, Args::Foldable);
     };
-    ($builder:expr; $fun_lookup:expr; VARARG $sym:expr => $fun:path) => {
+    ($builder:expr; $env:expr; $fun_lookup:expr; UNARY $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
-        $fun_lookup.insert($sym.into(), Args::Foldable);
-    };
-    ($builder:expr; $fun_lookup:expr; UNARY $sym:expr => $fun:path) => {
-        $builder.symbol($sym, $fun as *const u8);
-        $fun_lookup.insert($sym.into(), Args::Arglist(vec!["a".into()]));
+        let id = $env.insert_symbol($sym);
+        $fun_lookup.insert(id, Args::Arglist(vec!["a".into()]));
     };
     // Autoname
-    ($builder:expr; $fun:path) => {
+    ($builder:expr; $env:expr; $fun_lookup:expr; BINARY $fun:path) => {
         $builder.symbol(std::stringify!($fun), $fun as *const u8);
+        let id = $env.insert_symbol(std::stringify!($fun).into());
+        $fun_lookup.insert(id, Args::Arglist(vec!["a".into(), "b".into()]));
     };
-    ($builder:expr; $fun_lookup:expr; BINARY $fun:path) => {
+    ($builder:expr; $env:expr; $fun_lookup:expr; VARARG $fun:path) => {
         $builder.symbol(std::stringify!($fun), $fun as *const u8);
-        $fun_lookup.insert(
-            std::stringify!($fun).into(),
-            Args::Arglist(vec!["a".into(), "b".into()]),
-        );
+        let id = $env.insert_symbol(std::stringify!($fun).into());
+        $fun_lookup.insert(id, Args::Foldable);
     };
-    ($builder:expr; $fun_lookup:expr; VARARG $fun:path) => {
+    ($builder:expr; $env:expr; $fun_lookup:expr; UNARY $fun:path) => {
         $builder.symbol(std::stringify!($fun), $fun as *const u8);
-        $fun_lookup.insert(std::stringify!($fun).into(), Args::Foldable);
-    };
-    ($builder:expr; $fun_lookup:expr; UNARY $fun:path) => {
-        $builder.symbol(std::stringify!($fun), $fun as *const u8);
-        $fun_lookup.insert(
-            std::stringify!($fun).into(),
-            Args::Arglist(vec!["a".into()]),
-        );
+        let id = $env.insert_symbol(std::stringify!($fun).into());
+        $fun_lookup.insert(id, Args::Arglist(vec!["a".into()]));
     };
 }
 
-impl Default for Jit {
-    fn default() -> Self {
+impl<'e> JitBuilder {
+    pub fn finish(&self, env: &'e mut Env) -> Jit<'e> {
         let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
+        let mut fun_lookup = self.fun_lookup.clone();
         builder.hotswap(true);
-        let mut fun_lookup = FnvHashMap::default();
-        defsym!(builder; fun_lookup; UNARY cl_print);
-        defsym!(builder; fun_lookup; VARARG "+" => add);
-        defsym!(builder; fun_lookup; VARARG "-" => sub);
-        defsym!(builder; fun_lookup; BINARY "<" => less_than);
-        defsym!(builder; fun_lookup; BINARY ">" => more_than);
+
+        defsym!(builder; env; fun_lookup; VARARG "+".to_string() => add);
+        defsym!(builder; env; fun_lookup; VARARG "-".to_string() => sub);
 
         let module = JITModule::new(builder);
-        Self {
+        Jit {
             builder_ctx: FunctionBuilderContext::new(),
             ctx: module.make_context(),
             //  data_ctx: DataContext::new(),
             module,
             fun_lookup,
-            show_clir: false,
+            show_clir: self.show_clir,
+            env,
         }
     }
 }
 
-impl Jit {
+impl<'e> Jit<'e> {
+    pub fn build() -> JitBuilder {
+        let fun_lookup = FnvHashMap::default();
+        JitBuilder {
+            fun_lookup,
+            show_clir: false,
+        }
+    }
+
     pub fn compile(&mut self, fun: DefunExpr) -> Result<*const u8> {
         self.module.clear_context(&mut self.ctx);
-        let name = fun.name.clone();
+        let name = self.env.lookup_symbol(fun.name).unwrap().clone();
         let sig = fun.args.clone();
-        self.fun_lookup.insert(name.clone(), sig);
+        self.fun_lookup.insert(fun.name, sig);
         self.translate(fun)?;
 
         let id = if name == "_" {
@@ -152,13 +159,14 @@ impl Jit {
         builder.switch_to_block(entry_block);
         builder.seal_block(entry_block);
 
-        let variables = declare_variables(&mut builder, &fun, entry_block);
+        let variables = declare_variables(&mut builder, &fun, entry_block, self.env);
 
         let mut trans = FunctionTranslator {
             builder,
             variables,
             module: &mut self.module,
             fun_lookup: &self.fun_lookup,
+            env: self.env,
         };
 
         let return_value = trans.translate_expr(fun.body);
@@ -185,18 +193,22 @@ impl Jit {
     }
 }
 
-struct FunctionTranslator<'a, 'e> {
+struct FunctionTranslator<'a, 'f, 'e> {
     builder: FunctionBuilder<'a>,
     variables: HashMap<String, Variable>,
     module: &'a mut JITModule,
-    fun_lookup: &'e FnvHashMap<String, Args>,
+    fun_lookup: &'f FnvHashMap<usize, Args>,
+    env: &'e mut Env,
 }
 
-impl<'a, 'e> FunctionTranslator<'a, 'e> {
+impl<'a, 'f, 'e> FunctionTranslator<'a, 'f, 'e> {
     fn translate_expr(&mut self, expr: Expr) -> Value {
         match expr {
             Expr::Symbol(n, _) => {
-                let var = self.variables.get(&n).expect("Undefined variable");
+                let var = self
+                    .variables
+                    .get(self.env.lookup_symbol(n).unwrap())
+                    .expect("Undefined variable");
                 self.builder.use_var(*var)
             }
             Expr::Float(n, _) => self.builder.ins().f64const(n),
@@ -225,7 +237,9 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
                 self.builder.ins().f64const(0)
             }
             Expr::Loop(expr, _) => self.translate_loop(*expr),
-            Expr::Let(name, expr, _) => self.translate_let(name, *expr),
+            Expr::Let(name, expr, _) => {
+                self.translate_let(self.env.lookup_symbol(name).unwrap().clone(), *expr)
+            }
             Expr::Integer(int, _) => self.builder.ins().iconst(types::I64, int),
             Expr::String(_, _) => todo!(),
         }
@@ -263,7 +277,7 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
         self.builder.ins().f64const(0)
     }
 
-    fn translate_call(&mut self, name: String, exprs: Vec<Expr>) -> Value {
+    fn translate_call(&mut self, name: usize, exprs: Vec<Expr>) -> Value {
         // TODO this should be an ERROR!
         let signature = self.fun_lookup.get(&name).expect("Undefined function");
 
@@ -287,7 +301,7 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
         // TODO: Streamline the API here?
         let callee = self
             .module
-            .declare_function(&name, Linkage::Import, &sig)
+            .declare_function(self.env.lookup_symbol(name).unwrap(), Linkage::Import, &sig)
             .expect("problem declaring function");
         let local_callee = self.module.declare_func_in_func(callee, self.builder.func);
 
@@ -296,7 +310,7 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
         let ret = self.builder.ins().null(types::R64);
         arg_values.push(ret);
 
-        for arg in exprs {
+        for _arg in exprs {
             let ret = self.builder.ins().null(types::R64);
             arg_values.push(ret);
             //arg_values.push(self.translate_expr(arg))
@@ -347,6 +361,7 @@ fn declare_variables(
     builder: &mut FunctionBuilder,
     fun: &DefunExpr,
     block: Block,
+    env: &Env,
 ) -> HashMap<String, Variable> {
     let mut variables = HashMap::new();
     let mut index = 0;
@@ -373,7 +388,7 @@ fn declare_variables(
         }
     }
 
-    declare_variables_in_expr(fun.body.clone(), builder, &mut variables, &mut index);
+    declare_variables_in_expr(fun.body.clone(), builder, &mut variables, &mut index, env);
     variables
 }
 
@@ -382,34 +397,43 @@ fn declare_variables_in_expr(
     builder: &mut FunctionBuilder,
     variables: &mut HashMap<String, Variable>,
     index: &mut usize,
+    env: &Env,
 ) {
     match expr {
         Expr::Symbol(_, _) => (),
         Expr::Float(_, _) => (),
         Expr::List(exprs, _) => {
             for expr in exprs {
-                declare_variables_in_expr(expr, builder, variables, index)
+                declare_variables_in_expr(expr, builder, variables, index, env)
             }
         }
         Expr::Quoted(_, _) => (),
         Expr::Defun(..) => todo!("Not sure what to do"),
         Expr::If(cond, truth, lie, _) => {
             for expr in [*cond, *truth, *lie] {
-                declare_variables_in_expr(expr, builder, variables, index)
+                declare_variables_in_expr(expr, builder, variables, index, env)
             }
         }
-        Expr::Return(Some(expr), _) => declare_variables_in_expr(*expr, builder, variables, index),
+        Expr::Return(Some(expr), _) => {
+            declare_variables_in_expr(*expr, builder, variables, index, env)
+        }
         Expr::Return(None, _) => (),
         Expr::Loop(expr, _) => {
             let zero = builder.ins().iconst(types::I64, 0);
             let return_variable =
                 declare_variable(types::I64, builder, variables, index, "loop_cond");
             builder.def_var(return_variable, zero);
-            declare_variables_in_expr(*expr, builder, variables, index)
+            declare_variables_in_expr(*expr, builder, variables, index, env)
         }
         Expr::Let(name, expr, _) => {
-            declare_variable(types::F64, builder, variables, index, &name);
-            declare_variables_in_expr(*expr, builder, variables, index)
+            declare_variable(
+                types::F64,
+                builder,
+                variables,
+                index,
+                env.lookup_symbol(name).unwrap(),
+            );
+            declare_variables_in_expr(*expr, builder, variables, index, env)
         }
         Expr::Integer(_, _) => (),
         Expr::String(_, _) => todo!(),
