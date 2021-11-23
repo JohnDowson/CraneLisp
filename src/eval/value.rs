@@ -2,7 +2,7 @@ use crate::function::Func;
 use somok::Somok;
 use std::{
     ffi::{CStr, CString},
-    fmt::Debug,
+    fmt::{Debug, Display},
 };
 
 pub fn cons(v1: Value, v2: Value) -> Value {
@@ -209,7 +209,22 @@ impl Debug for Value {
             Tag::Float => write!(f, "{:?}", self.as_float()),
             Tag::Ptr => write!(f, "{:?}", unsafe { *self.as_ptr::<Value>() }),
             Tag::Pair => write!(f, "{:?}", self.as_pair()),
-            Tag::Func => write!(f, "Func"),
+            Tag::Func => ().okay(),
+            Tag::Bool => write!(f, "{:?}", self.as_bool()),
+            Tag::String => write!(f, "{:?}", self.as_string()),
+        }
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.tag {
+            Tag::Null => write!(f, "Null"),
+            Tag::Int => write!(f, "{:?}", self.as_int()),
+            Tag::Float => write!(f, "{:?}", self.as_float()),
+            Tag::Ptr => write!(f, "{:?}", unsafe { *self.as_ptr::<Value>() }),
+            Tag::Pair => write!(f, "{:?}", self.as_pair()),
+            Tag::Func => write!(f, "Function"),
             Tag::Bool => write!(f, "{:?}", self.as_bool()),
             Tag::String => write!(f, "{:?}", self.as_string()),
         }

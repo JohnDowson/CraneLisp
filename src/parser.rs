@@ -1,21 +1,22 @@
 use std::str::FromStr;
 
+use crate::jit::Jit;
 use crate::lexer::{Lexer, Token};
-use crate::{CranelispError, Env, Result, Span};
+use crate::{CranelispError, Result, Span};
 use somok::Somok;
 mod expr;
 use crate::function::Type;
 pub use expr::{Args, DefunExpr, Expr};
 pub type Arglist = Vec<(String, Type)>;
 
-pub struct Parser<'l, 'e> {
+pub struct Parser<'l, 'e, 'j> {
     lexer: &'l mut Lexer,
-    env: &'e mut Env,
+    jit: &'j mut Jit<'e>,
 }
 
-impl<'l, 'e> Parser<'l, 'e> {
-    pub fn new(lexer: &'l mut Lexer, env: &'e mut Env) -> Self {
-        Self { lexer, env }
+impl<'l, 'e, 'j> Parser<'l, 'e, 'j> {
+    pub fn new(lexer: &'l mut Lexer, jit: &'j mut Jit<'e>) -> Self {
+        Self { lexer, jit }
     }
 
     pub fn parse_expr(&mut self) -> Result<Expr> {
@@ -46,7 +47,7 @@ impl<'l, 'e> Parser<'l, 'e> {
                             let expr = self.parse_expr()?;
                             self.skip_whitespace()?;
                             let rparen = self.eat_rparen()?;
-                            let sym_id = self.env.insert_symbol(name);
+                            let sym_id = self.jit.env.insert_symbol(name);
                             Expr::Defun(
                                 Box::new(DefunExpr {
                                     name: sym_id,
@@ -77,7 +78,7 @@ impl<'l, 'e> Parser<'l, 'e> {
                             let expr = self.parse_expr()?;
                             self.skip_whitespace()?;
                             let rparen = self.eat_rparen()?;
-                            let sym_id = self.env.insert_symbol(name);
+                            let sym_id = self.jit.env.insert_symbol(name);
                             Expr::Let(
                                 sym_id,
                                 Box::new(expr),
@@ -193,7 +194,7 @@ impl<'l, 'e> Parser<'l, 'e> {
             }
 
             Token::Symbol(sym, span) => {
-                let sym_id = self.env.insert_symbol(sym);
+                let sym_id = self.jit.env.insert_symbol(sym);
                 let expr = Expr::Symbol(sym_id, span);
                 expr.okay()
             }

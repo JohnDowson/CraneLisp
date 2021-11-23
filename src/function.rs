@@ -11,20 +11,9 @@ use std::{fmt::Debug, str::FromStr};
 
 #[derive(Clone)]
 pub struct Func {
-    arity: usize,
-    native: bool,
+    pub arity: usize,
     body: *const u8,
 }
-impl Func {
-    pub fn from_fn(fun: extern "C" fn(&mut Value, &Value, &Value)) -> Self {
-        Self {
-            arity: usize::MAX,
-            native: true,
-            body: fun as _,
-        }
-    }
-}
-
 // extern "C" fn does not implement FnMut
 macro_rules! transmute {
     ($ptr:expr; $($typ:ty),+) => {
@@ -53,18 +42,16 @@ macro_rules! call {
 }
 
 impl Func {
+    pub fn from_fn(body: *const u8, arity: usize) -> Self {
+        Self { arity, body }
+    }
     pub fn jit(jit: &mut Jit, defun: DefunExpr) -> Result<Self> {
         let arity = match &defun.args {
             Args::Foldable => usize::MAX,
             Args::Arglist(a) => a.len(),
         };
         let body = jit.compile(defun)?;
-        Self {
-            arity,
-            native: false,
-            body,
-        }
-        .okay()
+        Self { arity, body }.okay()
     }
     pub fn foldable(&self) -> bool {
         self.arity == usize::MAX

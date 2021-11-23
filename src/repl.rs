@@ -1,12 +1,6 @@
 use std::{fs::File, io::Read, time::Instant};
 
-use cranelisp::{
-    eval::Value,
-    function::Func,
-    jit::Jit,
-    libcl::{add, sub},
-    Env,
-};
+use cranelisp::{jit::Jit, Env};
 use rustyline::{
     validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
     Config, EditMode,
@@ -29,23 +23,13 @@ impl Validator for InputValidator {
 }
 
 fn eval_env() -> Env {
-    let mut env = Env::default();
-    let (plus, minus) = (env.insert_symbol("+".into()), env.insert_symbol("-".into()));
-    let ev_env = [
-        (plus, Value::new_func(Func::from_fn(add))),
-        (minus, Value::new_func(Func::from_fn(sub))),
-    ]
-    .into_iter()
-    .collect();
-    env.env = ev_env;
-    env
+    Env::default()
 }
 
 pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
     let mut env = eval_env();
 
-    let mut jit_builder = Jit::build();
-    jit_builder.show_clir = clir;
+    let mut jit = Jit::new(&mut env, clir);
 
     let h = InputValidator {
         brackets: MatchingBracketValidator::new(),
@@ -75,7 +59,7 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
             lexer.rewind()
         }
 
-        let tree = match Parser::new(&mut lexer, &mut env).parse_expr() {
+        let tree = match Parser::new(&mut lexer, &mut jit).parse_expr() {
             Ok(e) => e,
             Err(e) => {
                 provide_diagnostic(&e, src);
@@ -86,11 +70,7 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
             println!("{:#?}", tree);
         }
 
-        let evaluated = match {
-            let mut jit = jit_builder.finish(&mut env);
-
-            crate::eval::eval(tree, &mut jit)
-        } {
+        let evaluated = match { crate::eval::eval(tree, &mut jit) } {
             Ok(v) => v,
             Err(e) => {
                 provide_diagnostic(&e, src);
@@ -116,8 +96,7 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> R
 
     let mut env = eval_env();
 
-    let mut jit_builder = Jit::build();
-    jit_builder.show_clir = clir;
+    let mut jit = Jit::new(&mut env, clir);
 
     let t1 = Instant::now();
     let mut lexer = match Lexer::new(src.clone()) {
@@ -132,7 +111,7 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> R
         lexer.rewind()
     }
     while !lexer.finished() {
-        let tree = match Parser::new(&mut lexer, &mut env).parse_expr() {
+        let tree = match Parser::new(&mut lexer, &mut jit).parse_expr() {
             Ok(e) => e,
             Err(cranelisp::CranelispError::EOF) => continue,
             Err(e) => {
@@ -145,7 +124,6 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> R
         }
 
         let t1 = Instant::now();
-        let mut jit = jit_builder.finish(&mut env);
         match crate::eval::eval(tree, &mut jit) {
             Ok(v) => println!(": {:?}", v),
             Err(e) => {

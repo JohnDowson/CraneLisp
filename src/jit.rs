@@ -2,11 +2,11 @@ use cranelift::codegen::ir::types; //, Function};
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, ModuleError}; //DataContext
-use fnv::FnvHashMap;
 use somok::Somok;
 use std::collections::HashMap;
 //use std::slice;
 
+use crate::function::Func;
 use crate::parser::{Args, DefunExpr, Expr};
 use crate::{libcl::*, CranelispError, Env, EvalError, Result};
 
@@ -15,63 +15,41 @@ pub struct Jit<'e> {
     ctx: codegen::Context,
     // data_ctx: DataContext,
     module: JITModule,
-    fun_lookup: FnvHashMap<usize, Args>,
     show_clir: bool,
     pub env: &'e mut Env,
 }
 
-pub struct JitBuilder {
-    fun_lookup: FnvHashMap<usize, Args>,
-    pub show_clir: bool,
-}
-
 macro_rules! defsym {
     // Named
-    ($builder:expr; $env:expr;  $fun_lookup:expr; BINARY $sym:expr => $fun:path) => {
+    ($builder:expr; $env:expr; $arity:expr; $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
         let id = $env.insert_symbol($sym);
-        $fun_lookup.insert(id, Args::Arglist(vec!["a".into(), "b".into()]));
-    };
-    ($builder:expr; $env:expr; $fun_lookup:expr; VARARG $sym:expr => $fun:path) => {
-        $builder.symbol($sym, $fun as *const u8);
-        let id = $env.insert_symbol($sym);
-        $fun_lookup.insert(id, Args::Foldable);
-    };
-    ($builder:expr; $env:expr; $fun_lookup:expr; UNARY $sym:expr => $fun:path) => {
-        $builder.symbol($sym, $fun as *const u8);
-        let id = $env.insert_symbol($sym);
-        $fun_lookup.insert(id, Args::Arglist(vec!["a".into()]));
+        $env.insert_value(
+            id,
+            crate::Value::new_func(crate::function::Func::from_fn($fun as *const u8, $arity)),
+        );
     };
     // Autoname
-    ($builder:expr; $env:expr; $fun_lookup:expr; BINARY $fun:path) => {
+    ($builder:expr; $env:expr; $arity:expr; $fun:path) => {
         $builder.symbol(std::stringify!($fun), $fun as *const u8);
         let id = $env.insert_symbol(std::stringify!($fun).into());
-        $fun_lookup.insert(id, Args::Arglist(vec!["a".into(), "b".into()]));
-    };
-    ($builder:expr; $env:expr; $fun_lookup:expr; VARARG $fun:path) => {
-        $builder.symbol(std::stringify!($fun), $fun as *const u8);
-        let id = $env.insert_symbol(std::stringify!($fun).into());
-        $fun_lookup.insert(id, Args::Foldable);
-    };
-    ($builder:expr; $env:expr; $fun_lookup:expr; UNARY $fun:path) => {
-        $builder.symbol(std::stringify!($fun), $fun as *const u8);
-        let id = $env.insert_symbol(std::stringify!($fun).into());
-        $fun_lookup.insert(id, Args::Arglist(vec!["a".into()]));
+        $env.insert_value(
+            id,
+            crate::Value::new_func(crate::function::Func::from_fn($fun as *const u8, $arity)),
+        );
     };
 }
 
-impl<'e> JitBuilder {
-    pub fn finish(&self, env: &'e mut Env) -> Jit<'e> {
+impl<'e> Jit<'e> {
+    pub fn new(env: &'e mut Env, show_clir: bool) -> Jit<'e> {
         let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
-        let mut fun_lookup = self.fun_lookup.clone();
         builder.hotswap(true);
 
-        defsym!(builder; env; fun_lookup; UNARY cl_print);
-        defsym!(builder; env; fun_lookup; VARARG "+".to_string() => add);
-        defsym!(builder; env; fun_lookup; VARARG "-".to_string() => sub);
-
-        defsym!(builder; env; fun_lookup; BINARY "<".to_string() => less_than);
-        defsym!(builder; env; fun_lookup; BINARY ">".to_string() => more_than);
+        defsym!(builder; env; 1; cl_print);
+        defsym!(builder; env; usize::MAX; "+".to_string() => add);
+        defsym!(builder; env; usize::MAX; "-".to_string() => sub);
+        defsym!(builder; env; 2; "<".to_string() => less_than);
+        defsym!(builder; env; 2; ">".to_string() => more_than);
 
         let module = JITModule::new(builder);
         Jit {
@@ -79,27 +57,22 @@ impl<'e> JitBuilder {
             ctx: module.make_context(),
             //  data_ctx: DataContext::new(),
             module,
-            fun_lookup,
-            show_clir: self.show_clir,
+            show_clir,
             env,
-        }
-    }
-}
-
-impl<'e> Jit<'e> {
-    pub fn build() -> JitBuilder {
-        let fun_lookup = FnvHashMap::default();
-        JitBuilder {
-            fun_lookup,
-            show_clir: false,
         }
     }
 
     pub fn compile(&mut self, fun: DefunExpr) -> Result<*const u8> {
         self.module.clear_context(&mut self.ctx);
         let name = self.env.lookup_symbol(fun.name).unwrap().clone();
-        let sig = fun.args.clone();
-        self.fun_lookup.insert(fun.name, sig);
+        let arity = match &fun.args {
+            Args::Foldable => usize::MAX,
+            Args::Arglist(a) => a.len(),
+        };
+        self.env.insert_value(
+            fun.name,
+            crate::Value::new_func(Func::from_fn(0 as _, arity)),
+        );
         self.translate(fun)?;
 
         let id = if name == "_" {
@@ -170,7 +143,6 @@ impl<'e> Jit<'e> {
             builder,
             variables,
             module: &mut self.module,
-            fun_lookup: &self.fun_lookup,
             env: self.env,
         };
         let mut memflags = MemFlags::new();
@@ -207,15 +179,14 @@ impl<'e> Jit<'e> {
     }
 }
 
-struct FunctionTranslator<'a, 'f, 'e> {
+struct FunctionTranslator<'a, 'e> {
     builder: FunctionBuilder<'a>,
     variables: HashMap<usize, Variable>,
     module: &'a mut JITModule,
-    fun_lookup: &'f FnvHashMap<usize, Args>,
     env: &'e mut Env,
 }
 
-impl<'a, 'f, 'e> FunctionTranslator<'a, 'f, 'e> {
+impl<'a, 'e> FunctionTranslator<'a, 'e> {
     fn translate_expr(&mut self, expr: Expr) -> Result<Value> {
         match expr {
             Expr::Symbol(n, _) => {
@@ -311,7 +282,9 @@ impl<'a, 'f, 'e> FunctionTranslator<'a, 'f, 'e> {
     }
 
     fn translate_call(&mut self, name: usize, exprs: Vec<Expr>) -> Result<Value> {
-        let signature = self.fun_lookup.get(&name).ok_or_else(|| {
+        dbg! {&self.env};
+        let signature = self.env.lookup_value(name).ok_or_else(|| {
+            eprintln!("Undefined in call translation");
             CranelispError::Eval(EvalError::Undefined(
                 self.env.lookup_symbol(name).unwrap().clone(),
                 exprs.first().unwrap().span(),
@@ -322,16 +295,9 @@ impl<'a, 'f, 'e> FunctionTranslator<'a, 'f, 'e> {
 
         // Return slot
         sig.params.push(AbiParam::new(types::R64));
-        match signature {
-            Args::Foldable => {
-                sig.params.push(AbiParam::new(types::R64));
-                sig.params.push(AbiParam::new(types::R64));
-            }
-            Args::Arglist(args) => {
-                for _ in args {
-                    sig.params.push(AbiParam::new(types::R64));
-                }
-            }
+        let arity = unsafe { (*signature.as_func()).arity };
+        for _ in 0..arity {
+            sig.params.push(AbiParam::new(types::R64));
         }
 
         // Yanked straight from JIT demo

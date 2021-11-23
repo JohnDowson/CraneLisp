@@ -55,6 +55,12 @@ impl Env {
     pub fn lookup_symbol(&self, sym_id: usize) -> Option<&String> {
         self.symbols.get(sym_id)
     }
+    pub fn insert_value(&mut self, id: usize, value: Value) {
+        self.env.insert(id, value);
+    }
+    pub fn lookup_value(&self, sym_id: usize) -> Option<&Value> {
+        self.env.get(&sym_id)
+    }
 }
 trait TryRemove {
     type Item;
