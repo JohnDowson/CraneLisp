@@ -134,6 +134,7 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> R
     while !lexer.finished() {
         let tree = match Parser::new(&mut lexer, &mut env).parse_expr() {
             Ok(e) => e,
+            Err(cranelisp::CranelispError::EOF) => continue,
             Err(e) => {
                 provide_diagnostic(&e, src);
                 return e.error();

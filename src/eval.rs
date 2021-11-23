@@ -5,7 +5,7 @@ pub use value::Value;
 
 pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Value> {
     match expr {
-        Expr::String(_s, _) => todo!(),
+        Expr::String(_s, _) => Value::new_string(_s).okay(),
         ref expr @ Expr::Symbol(s, _) => jit.env.env.get(&s).cloned().ok_or_else(|| {
             CranelispError::Eval(EvalError::Undefined(
                 jit.env.lookup_symbol(s).unwrap().clone(),

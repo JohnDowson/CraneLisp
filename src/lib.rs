@@ -35,7 +35,7 @@ use somok::Somok;
 
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Env {
     pub env: FnvHashMap<usize, Value>,
     pub symbols: Vec<String>,
@@ -130,9 +130,9 @@ pub mod libcl {
     use crate::eval::value::{Tag, Value};
 
     #[no_mangle]
-    pub extern "C" fn cl_print(n: f64) -> f64 {
-        println!("{}", n);
-        0.0
+    pub extern "C" fn cl_print(ret: &mut Value, a: &Value) {
+        println!("{:?}", a);
+        *ret = Value::NULL
     }
     #[no_mangle]
     pub extern "C" fn add(ret: &mut Value, a: &Value, b: &Value) {
@@ -141,7 +141,7 @@ pub mod libcl {
             (Tag::Int, Tag::Float) => *ret = Value::new_int(a.as_int() + b.as_float() as i64),
             (Tag::Float, Tag::Int) => *ret = Value::new_float(a.as_float() + b.as_int() as f64),
             (Tag::Float, Tag::Float) => *ret = Value::new_float(a.as_float() + b.as_float()),
-            _ => panic!("Can't add non-numbers"),
+            _ => eprintln!("Can't add non-numbers {:?} + {:?}", a, b),
         }
     }
     #[no_mangle]
@@ -151,7 +151,7 @@ pub mod libcl {
             (Tag::Int, Tag::Float) => *ret = Value::new_int(a.as_int() - b.as_float() as i64),
             (Tag::Float, Tag::Int) => *ret = Value::new_float(a.as_float() - b.as_int() as f64),
             (Tag::Float, Tag::Float) => *ret = Value::new_float(a.as_float() - b.as_float()),
-            _ => panic!("Can't subtract non-numbers"),
+            _ => eprintln!("Can't subtract non-numbers"),
         }
     }
     #[no_mangle]
@@ -161,7 +161,7 @@ pub mod libcl {
             (Tag::Int, Tag::Float) => *ret = Value::new_bool(a.as_int() < b.as_float() as i64),
             (Tag::Float, Tag::Int) => *ret = Value::new_bool(a.as_float() < b.as_int() as f64),
             (Tag::Float, Tag::Float) => *ret = Value::new_bool(a.as_float() < b.as_float()),
-            _ => panic!("Can't subtract non-numbers"),
+            _ => eprintln!("Can't subtract non-numbers"),
         }
     }
     #[no_mangle]
@@ -171,7 +171,7 @@ pub mod libcl {
             (Tag::Int, Tag::Float) => *ret = Value::new_bool(a.as_int() > b.as_float() as i64),
             (Tag::Float, Tag::Int) => *ret = Value::new_bool(a.as_float() > b.as_int() as f64),
             (Tag::Float, Tag::Float) => *ret = Value::new_bool(a.as_float() > b.as_float()),
-            _ => panic!("Can't subtract non-numbers"),
+            _ => eprintln!("Can't subtract non-numbers"),
         }
     }
 }

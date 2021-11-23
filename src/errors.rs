@@ -40,7 +40,37 @@ pub enum EvalError {
     Undefined(String, Span),
     ArityMismatch,
     InvalidSignature(String),
-    UnexpectedVirtualFunction(Span),
+}
+
+impl Display for EvalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "EvalError::")?;
+        match self {
+            EvalError::Undefined(_, _) => write!(f, "Undefined"),
+            EvalError::ArityMismatch => write!(f, "ArityMismatch"),
+            EvalError::InvalidSignature(_) => write!(f, "InvalidSignature"),
+        }
+    }
+}
+
+pub trait Spans {
+    fn spans(self) -> Vec<(Span, String)>;
+}
+
+impl Spans for &EvalError {
+    fn spans(self) -> Vec<(Span, String)> {
+        match self {
+            EvalError::Undefined(msg, span) => vec![(*span, msg.clone())],
+            EvalError::ArityMismatch => todo!(),
+            EvalError::InvalidSignature(_) => todo!(),
+        }
+    }
+}
+
+impl Spans for &SyntaxError {
+    fn spans(self) -> Vec<(Span, String)> {
+        self.spans.clone()
+    }
 }
 
 #[derive(Debug)]

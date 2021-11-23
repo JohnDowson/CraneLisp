@@ -39,7 +39,7 @@ pub fn provide_diagnostic(error: &CranelispError, program: impl Into<ariadne::So
     use ariadne::{Label, Report, ReportKind};
     match error {
         CranelispError::Syntax(s) => {
-            let spans = s.spans.clone().into_iter();
+            let spans = s.spans().into_iter();
             let mut report = Report::build(ReportKind::Error, (), 0).with_message(s.to_string());
 
             for (span, msg) in spans {
@@ -48,11 +48,17 @@ pub fn provide_diagnostic(error: &CranelispError, program: impl Into<ariadne::So
             report.finish().eprint(program.into()).unwrap();
         }
         CranelispError::IO(_) => todo!("IO"),
-        CranelispError::EOF => todo!("EOF"),
+        CranelispError::EOF => {}
         CranelispError::UnexpectedEOF(_, _) => todo!("UnexpectedEOF"),
         CranelispError::ReplIO(_) => todo!("IO"),
         CranelispError::Eval(e) => {
-            dbg!(e);
+            let spans = e.spans();
+            let mut report = Report::build(ReportKind::Error, (), 0).with_message(e.to_string());
+
+            for (span, msg) in spans {
+                report = report.with_label(Label::new(span).with_message(msg))
+            }
+            report.finish().eprint(program.into()).unwrap();
         }
         CranelispError::JIT(e) => todo!("{:#?}", e),
     }

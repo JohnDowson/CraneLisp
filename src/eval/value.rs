@@ -1,6 +1,9 @@
 use crate::function::Func;
 use somok::Somok;
-use std::fmt::Debug;
+use std::{
+    ffi::{CStr, CString},
+    fmt::Debug,
+};
 
 pub fn cons(v1: Value, v2: Value) -> Value {
     let tail = Box::leak(Box::new(Pair {
@@ -99,6 +102,13 @@ impl Value {
             value: value as u64,
         }
     }
+    pub fn new_string(value: impl Into<Vec<u8>>) -> Self {
+        let cstring = CString::new(value).unwrap().into_raw();
+        Self {
+            tag: Tag::String,
+            value: cstring as u64,
+        }
+    }
 
     pub fn as_int(&self) -> i64 {
         match self.tag {
@@ -109,6 +119,7 @@ impl Value {
             Tag::Pair => panic!("Can't cast Pair to Int"),
             Tag::Func => panic!("Can't cast Func to Int"),
             Tag::Bool => panic!("Can't cast Bool to Int"),
+            Tag::String => todo!(),
         }
     }
 
@@ -121,6 +132,7 @@ impl Value {
             Tag::Pair => panic!("Can't cast Pair to Float"),
             Tag::Func => panic!("Can't cast Func to Float"),
             Tag::Bool => panic!("Can't cast Bool to Float"),
+            Tag::String => todo!(),
         }
     }
 
@@ -133,6 +145,7 @@ impl Value {
             Tag::Pair => panic!("Can't cast Pair to Ptr"),
             Tag::Func => panic!("Can't cast Func to Ptr"),
             Tag::Bool => panic!("Can't cast Bool to Ptr"),
+            Tag::String => todo!(),
         }
     }
 
@@ -145,6 +158,7 @@ impl Value {
             Tag::Pair => unsafe { std::mem::transmute(self.value) },
             Tag::Func => panic!("Can't cast Func to Pair"),
             Tag::Bool => panic!("Can't cast Bool to Pair"),
+            Tag::String => todo!(),
         }
     }
 
@@ -157,6 +171,7 @@ impl Value {
             Tag::Pair => panic!("Can't cast Pair to Func"),
             Tag::Func => unsafe { std::mem::transmute(self.value) },
             Tag::Bool => panic!("Can't cast Bool to Func"),
+            Tag::String => todo!(),
         }
     }
     pub fn as_bool(&self) -> bool {
@@ -168,6 +183,19 @@ impl Value {
             Tag::Pair => panic!("Can't cast Pair to Bool"),
             Tag::Func => panic!("Can't cast Func to Bool"),
             Tag::Bool => self.value != 0,
+            Tag::String => todo!(),
+        }
+    }
+    pub fn as_string(&self) -> &CStr {
+        match self.tag {
+            Tag::Null => panic!("Can't cast Null to String"),
+            Tag::Int => panic!("Can't cast Int to String"),
+            Tag::Float => panic!("Can't cast Float to String"),
+            Tag::Ptr => panic!("Can't cast Ptr to String"),
+            Tag::Pair => panic!("Can't cast Pair to String"),
+            Tag::Func => panic!("Can't cast Func to String"),
+            Tag::Bool => panic!("Can't cast Bool to String"),
+            Tag::String => unsafe { CStr::from_ptr(self.value as *mut i8) },
         }
     }
 }
@@ -183,6 +211,7 @@ impl Debug for Value {
             Tag::Pair => write!(f, "{:?}", self.as_pair()),
             Tag::Func => write!(f, "Func"),
             Tag::Bool => write!(f, "{:?}", self.as_bool()),
+            Tag::String => write!(f, "{:?}", self.as_string()),
         }
     }
 }
@@ -197,4 +226,5 @@ pub enum Tag {
     Pair = 4,
     Func = 5,
     Bool = 6,
+    String = 7,
 }

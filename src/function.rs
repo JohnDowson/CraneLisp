@@ -12,12 +12,14 @@ use std::{fmt::Debug, str::FromStr};
 #[derive(Clone)]
 pub struct Func {
     arity: usize,
+    native: bool,
     body: *const u8,
 }
 impl Func {
     pub fn from_fn(fun: extern "C" fn(&mut Value, &Value, &Value)) -> Self {
         Self {
             arity: usize::MAX,
+            native: true,
             body: fun as _,
         }
     }
@@ -57,7 +59,12 @@ impl Func {
             Args::Arglist(a) => a.len(),
         };
         let body = jit.compile(defun)?;
-        Self { arity, body }.okay()
+        Self {
+            arity,
+            native: false,
+            body,
+        }
+        .okay()
     }
     pub fn foldable(&self) -> bool {
         self.arity == usize::MAX
