@@ -1,5 +1,5 @@
 use crate::function::Func;
-use somok::Somok;
+use somok::{Leaksome, Somok};
 use std::{
     ffi::{CStr, CString},
     fmt::{Debug, Display},
@@ -109,17 +109,25 @@ impl Value {
             value: cstring as u64,
         }
     }
+    pub fn new_return(value: Value) -> Self {
+        let value = value.boxed().leak() as *mut Value as u64;
+        Self {
+            tag: Tag::Return,
+            value,
+        }
+    }
 
     pub fn as_int(&self) -> i64 {
         match self.tag {
-            Tag::Null => self.value as _,
+            Tag::Null => 0,
             Tag::Int => self.value as _,
-            Tag::Float => panic!("Can't cast Float to Int"),
-            Tag::Ptr => panic!("Can't cast Ptr to Int"),
+            Tag::Float => self.value as f64 as _,
+            Tag::Ptr => self.value as _,
             Tag::Pair => panic!("Can't cast Pair to Int"),
             Tag::Func => panic!("Can't cast Func to Int"),
-            Tag::Bool => panic!("Can't cast Bool to Int"),
+            Tag::Bool => self.value as _,
             Tag::String => todo!(),
+            Tag::Return => todo!(),
         }
     }
 
@@ -133,6 +141,7 @@ impl Value {
             Tag::Func => panic!("Can't cast Func to Float"),
             Tag::Bool => panic!("Can't cast Bool to Float"),
             Tag::String => todo!(),
+            Tag::Return => todo!(),
         }
     }
 
@@ -146,6 +155,7 @@ impl Value {
             Tag::Func => panic!("Can't cast Func to Ptr"),
             Tag::Bool => panic!("Can't cast Bool to Ptr"),
             Tag::String => todo!(),
+            Tag::Return => self.value as *mut T,
         }
     }
 
@@ -159,6 +169,7 @@ impl Value {
             Tag::Func => panic!("Can't cast Func to Pair"),
             Tag::Bool => panic!("Can't cast Bool to Pair"),
             Tag::String => todo!(),
+            Tag::Return => todo!(),
         }
     }
 
@@ -172,18 +183,20 @@ impl Value {
             Tag::Func => unsafe { std::mem::transmute(self.value) },
             Tag::Bool => panic!("Can't cast Bool to Func"),
             Tag::String => todo!(),
+            Tag::Return => todo!(),
         }
     }
     pub fn as_bool(&self) -> bool {
         match self.tag {
-            Tag::Null => panic!("Can't cast Null to Bool"),
-            Tag::Int => panic!("Can't cast Int to Bool"),
-            Tag::Float => panic!("Can't cast Float to Bool"),
+            Tag::Null => false,
+            Tag::Int => self.value != 0,
+            Tag::Float => (self.value as f64) >= 0.0,
             Tag::Ptr => panic!("Can't cast Ptr to Bool"),
             Tag::Pair => panic!("Can't cast Pair to Bool"),
             Tag::Func => panic!("Can't cast Func to Bool"),
             Tag::Bool => self.value != 0,
             Tag::String => todo!(),
+            Tag::Return => todo!(),
         }
     }
     pub fn as_string(&self) -> &CStr {
@@ -196,6 +209,7 @@ impl Value {
             Tag::Func => panic!("Can't cast Func to String"),
             Tag::Bool => panic!("Can't cast Bool to String"),
             Tag::String => unsafe { CStr::from_ptr(self.value as *mut i8) },
+            Tag::Return => todo!(),
         }
     }
 }
@@ -209,9 +223,10 @@ impl Debug for Value {
             Tag::Float => write!(f, "{:?}", self.as_float()),
             Tag::Ptr => write!(f, "{:?}", unsafe { *self.as_ptr::<Value>() }),
             Tag::Pair => write!(f, "{:?}", self.as_pair()),
-            Tag::Func => ().okay(),
+            Tag::Func => write!(f, "{:?}", unsafe { *self.as_func() }),
             Tag::Bool => write!(f, "{:?}", self.as_bool()),
             Tag::String => write!(f, "{:?}", self.as_string()),
+            Tag::Return => write!(f, "{:?}", unsafe { *self.as_ptr::<Value>() }),
         }
     }
 }
@@ -227,6 +242,7 @@ impl Display for Value {
             Tag::Func => write!(f, "Function"),
             Tag::Bool => write!(f, "{:?}", self.as_bool()),
             Tag::String => write!(f, "{:?}", self.as_string()),
+            Tag::Return => write!(f, "{:?}", unsafe { *self.as_ptr::<Value>() }),
         }
     }
 }
@@ -242,4 +258,5 @@ pub enum Tag {
     Func = 5,
     Bool = 6,
     String = 7,
+    Return = 8,
 }

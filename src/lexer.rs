@@ -238,6 +238,12 @@ impl Lexer {
     pub fn rewind(&mut self) {
         self.next = 0;
     }
+    pub fn rewind_to(&mut self, n: usize) {
+        self.next = n;
+    }
+    pub fn next(&self) -> usize {
+        self.next
+    }
 }
 
 impl Debug for Lexer {

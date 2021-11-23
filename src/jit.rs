@@ -26,7 +26,25 @@ macro_rules! defsym {
         let id = $env.insert_symbol($sym);
         $env.insert_value(
             id,
-            crate::Value::new_func(crate::function::Func::from_fn($fun as *const u8, $arity)),
+            crate::Value::new_func(crate::function::Func::from_fn(
+                $fun as *const u8,
+                $arity,
+                false,
+                false,
+            )),
+        );
+    };
+    ($builder:expr; $env:expr; FOLDABLE $sym:expr => $fun:path) => {
+        $builder.symbol($sym, $fun as *const u8);
+        let id = $env.insert_symbol($sym);
+        $env.insert_value(
+            id,
+            crate::Value::new_func(crate::function::Func::from_fn(
+                $fun as *const u8,
+                2,
+                false,
+                true,
+            )),
         );
     };
     // Autoname
@@ -35,7 +53,25 @@ macro_rules! defsym {
         let id = $env.insert_symbol(std::stringify!($fun).into());
         $env.insert_value(
             id,
-            crate::Value::new_func(crate::function::Func::from_fn($fun as *const u8, $arity)),
+            crate::Value::new_func(crate::function::Func::from_fn(
+                $fun as *const u8,
+                $arity,
+                false,
+                false,
+            )),
+        );
+    };
+    ($builder:expr; $env:expr; FOLDABLE $fun:path) => {
+        $builder.symbol(std::stringify!($fun), $fun as *const u8);
+        let id = $env.insert_symbol(std::stringify!($fun).into());
+        $env.insert_value(
+            id,
+            crate::Value::new_func(crate::function::Func::from_fn(
+                $fun as *const u8,
+                2,
+                false,
+                true,
+            )),
         );
     };
 }
@@ -46,10 +82,23 @@ impl<'e> Jit<'e> {
         builder.hotswap(true);
 
         defsym!(builder; env; 1; cl_print);
-        defsym!(builder; env; usize::MAX; "+".to_string() => add);
-        defsym!(builder; env; usize::MAX; "-".to_string() => sub);
+        defsym!(builder; env; 1; cl_eprint);
+        defsym!(builder; env; FOLDABLE "+".to_string() => add);
+        defsym!(builder; env; FOLDABLE "-".to_string() => sub);
         defsym!(builder; env; 2; "<".to_string() => less_than);
         defsym!(builder; env; 2; ">".to_string() => more_than);
+
+        builder.symbol(std::stringify!(cl_alloc_value), cl_alloc_value as *const u8);
+        let id = env.insert_symbol(std::stringify!(cl_alloc_value).into());
+        env.insert_value(
+            id,
+            crate::Value::new_func(crate::function::Func::from_fn(
+                cl_alloc_value as *const u8,
+                0,
+                true,
+                false,
+            )),
+        );
 
         let module = JITModule::new(builder);
         Jit {
@@ -65,13 +114,17 @@ impl<'e> Jit<'e> {
     pub fn compile(&mut self, fun: DefunExpr) -> Result<*const u8> {
         self.module.clear_context(&mut self.ctx);
         let name = self.env.lookup_symbol(fun.name).unwrap().clone();
+        let mut foldable = false;
         let arity = match &fun.args {
-            Args::Foldable => usize::MAX,
-            Args::Arglist(a) => a.len(),
+            Args::Foldable => {
+                foldable = true;
+                2
+            }
+            Args::Arglist(a) => a.len() as u8,
         };
         self.env.insert_value(
             fun.name,
-            crate::Value::new_func(Func::from_fn(0 as _, arity)),
+            crate::Value::new_func(Func::from_fn(0 as _, arity, false, foldable)),
         );
         self.translate(fun)?;
 
@@ -83,19 +136,23 @@ impl<'e> Jit<'e> {
                 .declare_function(&name, Linkage::Export, &self.ctx.func.signature)?
         };
 
-        if let Err(ModuleError::DuplicateDefinition(..)) = self.module.define_function(
+        match self.module.define_function(
             id,
             &mut self.ctx,
             &mut codegen::binemit::NullTrapSink {},
             &mut codegen::binemit::NullStackMapSink {},
         ) {
-            self.module.prepare_for_function_redefine(id)?;
-            self.module.define_function(
-                id,
-                &mut self.ctx,
-                &mut codegen::binemit::NullTrapSink {},
-                &mut codegen::binemit::NullStackMapSink {},
-            )?;
+            Err(ModuleError::DuplicateDefinition(..)) => {
+                self.module.prepare_for_function_redefine(id)?;
+                self.module.define_function(
+                    id,
+                    &mut self.ctx,
+                    &mut codegen::binemit::NullTrapSink {},
+                    &mut codegen::binemit::NullStackMapSink {},
+                )?;
+            }
+            Err(e) => return CranelispError::from(e).error(),
+            _ => (),
         }
 
         self.module.clear_context(&mut self.ctx);
@@ -216,7 +273,7 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
                 list_ret.okay()
             }
             Expr::Quoted(_, _) => todo!("dunno"),
-            Expr::Defun(..) => todo!("dunno"),
+            Expr::Defun(_d, _) => todo!("Should this be allowed?"),
             Expr::If(cond, truth, lie, _) => self.translate_if(*cond, *truth, *lie),
             Expr::Return(_, _) => {
                 let n = self.env.insert_symbol("loop_cond".into());
@@ -278,47 +335,64 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
 
         self.builder.seal_block(header_block);
         self.builder.seal_block(exit_block);
-        self.builder.ins().f64const(0).okay()
+        self.builder.ins().iconst(types::R64, 0).okay()
     }
 
     fn translate_call(&mut self, name: usize, exprs: Vec<Expr>) -> Result<Value> {
-        dbg! {&self.env};
-        let signature = self.env.lookup_value(name).ok_or_else(|| {
-            eprintln!("Undefined in call translation");
-            CranelispError::Eval(EvalError::Undefined(
-                self.env.lookup_symbol(name).unwrap().clone(),
-                exprs.first().unwrap().span(),
-            ))
-        })?;
+        let signature = unsafe {
+            *self
+                .env
+                .lookup_value(name)
+                .ok_or_else(|| {
+                    eprintln!("Undefined in call translation");
+                    CranelispError::Eval(EvalError::Undefined(
+                        self.env.lookup_symbol(name).unwrap().clone(),
+                        exprs.first().unwrap().span(),
+                    ))
+                })?
+                .as_func()
+        };
 
         let mut sig = self.module.make_signature();
+        if signature.stack_return {
+            sig.returns.push(AbiParam::new(types::R64));
+        } else {
+            // Return slot
+            sig.params.push(AbiParam::new(types::R64));
+        }
 
-        // Return slot
-        sig.params.push(AbiParam::new(types::R64));
-        let arity = unsafe { (*signature.as_func()).arity };
-        for _ in 0..arity {
+        for _ in 0..signature.arity {
             sig.params.push(AbiParam::new(types::R64));
         }
 
         // Yanked straight from JIT demo
-        let callee = self
-            .module
-            .declare_function(self.env.lookup_symbol(name).unwrap(), Linkage::Import, &sig)
-            .expect("problem declaring function");
+        let callee = self.module.declare_function(
+            self.env.lookup_symbol(name).unwrap(),
+            Linkage::Import,
+            &sig,
+        )?;
         let local_callee = self.module.declare_func_in_func(callee, self.builder.func);
-
         let mut arg_values = Vec::new();
-        // allocate return slot
-        let ret = self
-            .builder
-            .create_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 31));
-        let ret = self.builder.ins().stack_addr(types::R64, ret, 0);
-        arg_values.push(ret);
-        for arg in exprs {
-            arg_values.push(self.translate_expr(arg)?)
+        if signature.stack_return {
+            for arg in exprs {
+                arg_values.push(self.translate_expr(arg)?)
+            }
+            let call = self.builder.ins().call(local_callee, &arg_values);
+            self.builder.inst_results(call)[0]
+        } else {
+            // allocate return slot
+            let ret = self
+                .builder
+                .create_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 31));
+            let ret = self.builder.ins().stack_addr(types::R64, ret, 0);
+            arg_values.push(ret);
+            for arg in exprs {
+                arg_values.push(self.translate_expr(arg)?)
+            }
+            self.builder.ins().call(local_callee, &arg_values);
+            ret
         }
-        self.builder.ins().call(local_callee, &arg_values);
-        ret.okay()
+        .okay()
     }
 
     fn translate_let(&mut self, name: String, expr: Expr) -> Result<Value> {
@@ -337,7 +411,7 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
         let lie_block = self.builder.create_block();
         let merge_block = self.builder.create_block();
 
-        self.builder.append_block_param(merge_block, types::F64);
+        self.builder.append_block_param(merge_block, types::R64);
         let mut memflags = MemFlags::new();
         memflags.set_aligned();
         let cond_val = self.builder.ins().load(types::I64, memflags, cond_val, 8);

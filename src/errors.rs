@@ -23,7 +23,7 @@ pub enum CranelispError {
     ReplIO(#[from] rustyline::error::ReadlineError),
     #[error("")]
     Eval(EvalError),
-    #[error("Couldn't get input: {0}")]
+    #[error("Jit error: {0}")]
     JIT(#[from] cranelift_module::ModuleError),
 }
 

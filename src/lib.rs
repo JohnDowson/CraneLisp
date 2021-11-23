@@ -133,13 +133,26 @@ impl ariadne::Span for Span {
 }
 
 pub mod libcl {
+    use somok::{Leaksome, Somok};
+
     use crate::eval::value::{Tag, Value};
 
     #[no_mangle]
     pub extern "C" fn cl_print(ret: &mut Value, a: &Value) {
-        println!("{:?}", a);
+        println!("{}", a);
         *ret = Value::NULL
     }
+    #[no_mangle]
+    pub extern "C" fn cl_eprint(ret: &mut Value, a: &Value) {
+        eprintln!("{:?}", a);
+        *ret = Value::NULL
+    }
+
+    #[no_mangle]
+    pub extern "C" fn cl_alloc_value(_ret: &mut Value) {
+        Value::NULL.boxed().leak();
+    }
+
     #[no_mangle]
     pub extern "C" fn add(ret: &mut Value, a: &Value, b: &Value) {
         match (a.tag, b.tag) {
@@ -150,6 +163,7 @@ pub mod libcl {
             _ => eprintln!("Can't add non-numbers {:?} + {:?}", a, b),
         }
     }
+
     #[no_mangle]
     pub extern "C" fn sub(ret: &mut Value, a: &Value, b: &Value) {
         match (a.tag, b.tag) {
@@ -160,6 +174,7 @@ pub mod libcl {
             _ => eprintln!("Can't subtract non-numbers"),
         }
     }
+
     #[no_mangle]
     pub extern "C" fn less_than(ret: &mut Value, a: &Value, b: &Value) {
         match (a.tag, b.tag) {
@@ -170,6 +185,7 @@ pub mod libcl {
             _ => eprintln!("Can't subtract non-numbers"),
         }
     }
+
     #[no_mangle]
     pub extern "C" fn more_than(ret: &mut Value, a: &Value, b: &Value) {
         match (a.tag, b.tag) {

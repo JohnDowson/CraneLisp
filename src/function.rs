@@ -9,9 +9,11 @@ use crate::{
 };
 use std::{fmt::Debug, str::FromStr};
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Func {
-    pub arity: usize,
+    pub arity: u8,
+    pub stack_return: bool,
+    pub foldable: bool,
     body: *const u8,
 }
 // extern "C" fn does not implement FnMut
@@ -42,23 +44,35 @@ macro_rules! call {
 }
 
 impl Func {
-    pub fn from_fn(body: *const u8, arity: usize) -> Self {
-        Self { arity, body }
+    pub fn from_fn(body: *const u8, arity: u8, stack_return: bool, foldable: bool) -> Self {
+        Self {
+            arity,
+            stack_return,
+            body,
+            foldable,
+        }
     }
     pub fn jit(jit: &mut Jit, defun: DefunExpr) -> Result<Self> {
+        let mut foldable = false;
         let arity = match &defun.args {
-            Args::Foldable => usize::MAX,
-            Args::Arglist(a) => a.len(),
+            Args::Foldable => {
+                foldable = true;
+                2
+            }
+            Args::Arglist(a) => a.len() as u8,
         };
         let body = jit.compile(defun)?;
-        Self { arity, body }.okay()
-    }
-    pub fn foldable(&self) -> bool {
-        self.arity == usize::MAX
+        Self {
+            arity,
+            stack_return: false,
+            body,
+            foldable,
+        }
+        .okay()
     }
 
     pub fn call(&self, args: Vec<Value>) -> Result<Value> {
-        if self.arity > args.len() && self.arity != usize::MAX {
+        if self.arity > args.len() as u8 && !self.foldable {
             return errors::eval(EvalError::ArityMismatch);
         }
         unsafe {
@@ -71,6 +85,14 @@ impl Func {
                     let func = transmute!(self.body; Value);
                     call!(args; func; 0).okay()
                 }
+                2 if self.foldable => {
+                    let func = transmute!(self.body; Value, Value);
+                    #[allow(clippy::redundant_closure)]
+                    args.into_iter()
+                        .reduce(|acc, n| call!([acc, n]; func; 0, 1))
+                        .unwrap_or(Value::NULL)
+                        .okay()
+                }
                 2 => {
                     let func = transmute!(self.body; Value, Value);
                     call!(args; func; 0, 1).okay()
@@ -79,14 +101,7 @@ impl Func {
                     let func = transmute!(self.body; Value, Value, Value);
                     call!(args; func; 0, 1, 2).okay()
                 }
-                usize::MAX => {
-                    let func = transmute!(self.body; Value, Value);
-                    #[allow(clippy::redundant_closure)]
-                    args.into_iter()
-                        .reduce(|acc, n| call!([acc, n]; func; 0, 1))
-                        .unwrap_or(Value::NULL)
-                        .okay()
-                }
+
                 arity => todo!("arity: {}", arity),
             }
         }
@@ -95,7 +110,11 @@ impl Func {
 
 impl Debug for Func {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Native function")
+        writeln!(
+            f,
+            "Native function arity: {:?} stack return: {:?} body ptr:{:?}",
+            self.arity, self.stack_return, self.body
+        )
     }
 }
 

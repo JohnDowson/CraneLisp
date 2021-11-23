@@ -23,9 +23,7 @@ pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Value> {
                     value_store = eval(expr, jit)?;
                     &value_store
                 }
-                Some(Expr::If(_cond, _truth, _lie, _)) => {
-                    todo!()
-                }
+                Some(expr @ Expr::If(..)) => return eval(expr, jit),
                 Some(Expr::Float(_val, _)) => todo!(),
                 Some(expr @ Expr::List(..)) => {
                     let mut last = eval(expr, jit);
@@ -48,6 +46,7 @@ pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Value> {
                 .into_iter()
                 .map(|e| eval(e, jit))
                 .collect::<Result<Vec<_>>>()?;
+            dbg!(fun);
             unsafe { (*fun.as_func()).call(values) }
         }
         Expr::Quoted(_, _) => todo!("Deal vith evaluating things that shouldn't be evaluated"),
@@ -57,7 +56,7 @@ pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Value> {
             let func = Func::jit(jit, *defun_expr)?;
             // store
             if jit.env.lookup_symbol(name).expect("Symbol is not interned") != "_" {
-                jit.env.env.insert(name, Value::new_func(func.clone()));
+                jit.env.env.insert(name, Value::new_func(func));
             };
             Value::new_func(func).okay()
         }
@@ -66,14 +65,26 @@ pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Value> {
             jit.env.env.insert(sym, val);
             val.okay()
         }
-        Expr::If(_cond, _truth, _lie, _) => {
-            todo!()
+        Expr::If(cond, truth, lie, _) => {
+            if eval(*cond, jit)?.as_bool() {
+                eval(*truth, jit)
+            } else {
+                eval(*lie, jit)
+            }
         }
-        Expr::Return(_expr, ..) => {
-            todo!()
+        Expr::Return(expr, ..) => {
+            if let Some(e) = expr {
+                Value::new_return(eval(*e, jit)?).okay()
+            } else {
+                Value::new_return(Value::NULL).okay()
+            }
         }
-        Expr::Loop(_body, ..) => {
-            todo!()
+        Expr::Loop(body, ..) => {
+            let mut last_val = Value::NULL;
+            while !matches!(last_val.tag, value::Tag::Return) {
+                last_val = eval(*body.clone(), jit)?;
+            }
+            unsafe { *last_val.as_ptr::<Value>() }.okay()
         }
     }
 }

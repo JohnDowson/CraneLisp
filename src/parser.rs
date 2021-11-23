@@ -69,8 +69,16 @@ impl<'l, 'e, 'j> Parser<'l, 'e, 'j> {
                         "return" => {
                             self.lexer.next_token()?;
                             self.skip_whitespace()?;
+                            let next = self.lexer.next();
+                            let expr = match self.parse_expr() {
+                                Ok(expr) => expr.boxed().some(),
+                                Err(_e) => {
+                                    self.lexer.rewind_to(next);
+                                    None
+                                }
+                            };
                             let rparen = self.eat_rparen()?;
-                            Expr::Return(None, Span::merge(token.span(), rparen.span())).okay()
+                            Expr::Return(expr, Span::merge(token.span(), rparen.span())).okay()
                         }
                         "let" => {
                             self.lexer.next_token()?;

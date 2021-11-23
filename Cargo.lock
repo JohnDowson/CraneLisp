@@ -544,9 +544,9 @@ checksum = "1ecab6c735a6bb4139c0caafd0cc3635748bbb3acf4550e8138122099251f309"
 
 [[package]]
 name = "somok"
-version = "1.0.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "255bd1620b369e555618720177885bd6f1d5e4cc233ffae60a34be9d486f3619"
+checksum = "4b7bf3fac69d507fed59e3926be232c6b9878157ead2cd93a29da7d9163924e8"
 
 [[package]]
 name = "str-buf"
