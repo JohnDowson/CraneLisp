@@ -1,3 +1,5 @@
+use smol_str::SmolStr;
+
 use crate::Span;
 use std::fmt::Debug;
 
@@ -6,7 +8,7 @@ pub enum Token {
     RParen(Span),
     Float(f64, Span),
     Integer(i64, Span),
-    Symbol(String, Span),
+    Symbol(SmolStr, Span),
     String(String, Span),
     Quote(Span),
     TypeSeparator(Span),
@@ -58,7 +60,7 @@ impl Token {
             _ => panic!(),
         }
     }
-    pub fn extract_symbol(&self) -> String {
+    pub fn extract_symbol(&self) -> SmolStr {
         match self {
             Self::Symbol(s, ..) => s.clone(),
             _ => panic!(),

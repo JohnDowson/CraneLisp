@@ -3,6 +3,7 @@ use std::str::FromStr;
 use crate::jit::Jit;
 use crate::lexer::{Lexer, Token};
 use crate::{CranelispError, Result, Span};
+use smol_str::SmolStr;
 use somok::Somok;
 mod expr;
 use crate::function::Type;
@@ -284,7 +285,7 @@ impl<'l, 'e, 'j> Parser<'l, 'e, 'j> {
         }
     }
 
-    fn eat_symbol(&mut self) -> Result<String> {
+    fn eat_symbol(&mut self) -> Result<SmolStr> {
         match self.lexer.next_token()? {
             Token::Symbol(sym, ..) => sym.okay(),
             token if token.is_whitespace() => self.eat_symbol(),

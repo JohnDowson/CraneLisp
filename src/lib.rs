@@ -34,36 +34,37 @@ use std::ops::Deref;
 pub use errors::*;
 use eval::Atom;
 use fnv::FnvHashMap;
+use smol_str::SmolStr;
 use somok::{Leaksome, Somok};
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Symbol {
-    name: &'static str,
+    name: SmolStr,
 }
 impl Deref for Symbol {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
-        self.name
+        &*self.name
     }
 }
 
 #[derive(Default, Debug)]
 pub struct Env {
     pub env: FnvHashMap<usize, Atom>,
-    symbol_ids: FnvHashMap<&'static str, usize>,
+    symbol_ids: FnvHashMap<SmolStr, usize>,
     symbols: Vec<Symbol>,
     last_symbol_id: Option<usize>,
 }
 
 impl Env {
     pub fn insert_symbol_str(&mut self, sym: &'static str) -> usize {
-        let symbol_exists = self.symbol_ids.keys().any(|&s| sym == s);
+        let symbol_exists = self.symbol_ids.keys().any(|s| sym == *s);
         if symbol_exists {
             *self.symbol_ids.get(sym).unwrap()
         } else {
-            self.symbols.push(Symbol { name: sym });
+            self.symbols.push(Symbol { name: sym.into() });
             let id = if let Some(mut id) = self.last_symbol_id {
                 id += 1;
                 self.last_symbol_id = Some(id);
@@ -72,17 +73,16 @@ impl Env {
                 self.last_symbol_id = 0.some();
                 0
             };
-            self.symbol_ids.insert(sym, id);
+            self.symbol_ids.insert(sym.into(), id);
             id
         }
     }
-    pub fn insert_symbol(&mut self, sym: String) -> usize {
-        let symbol_exists = self.symbol_ids.keys().any(|&s| sym == s);
+    pub fn insert_symbol(&mut self, sym: SmolStr) -> usize {
+        let symbol_exists = self.symbol_ids.keys().any(|s| sym == *s);
         if symbol_exists {
             *self.symbol_ids.get(&*sym).unwrap()
         } else {
-            let sym = sym.boxed().leak();
-            self.symbols.push(Symbol { name: sym });
+            self.symbols.push(Symbol { name: sym.clone() });
             let id = if let Some(mut id) = self.last_symbol_id {
                 id += 1;
                 self.last_symbol_id = Some(id);
@@ -96,7 +96,7 @@ impl Env {
         }
     }
     pub fn lookup_symbol(&self, sym_id: usize) -> Option<Symbol> {
-        self.symbols.get(sym_id).copied()
+        self.symbols.get(sym_id).cloned()
     }
     pub fn insert_value(&mut self, id: usize, value: Atom) {
         self.env.insert(id, value);

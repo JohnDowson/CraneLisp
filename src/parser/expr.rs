@@ -1,10 +1,12 @@
+use smol_str::SmolStr;
+
 use crate::Span;
 use std::fmt::{Debug, Display};
 
 #[derive(Debug, Clone)]
 pub enum Args {
     Foldable,
-    Arglist(Vec<String>),
+    Arglist(Vec<SmolStr>),
 }
 
 #[derive(Debug, Clone)]

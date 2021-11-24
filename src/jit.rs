@@ -23,7 +23,7 @@ macro_rules! defsym {
     // Named
     ($builder:expr; $env:expr; $arity:expr; $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
-        let id = $env.insert_symbol($sym);
+        let id = $env.insert_symbol($sym.into());
         $env.insert_value(
             id,
             crate::Atom::new_func(crate::function::Func::from_fn(
@@ -36,7 +36,7 @@ macro_rules! defsym {
     };
     ($builder:expr; $env:expr; FOLDABLE $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
-        let id = $env.insert_symbol($sym);
+        let id = $env.insert_symbol($sym.into());
         $env.insert_value(
             id,
             crate::Atom::new_func(crate::function::Func::from_fn(
@@ -113,7 +113,7 @@ impl<'e> Jit<'e> {
 
     pub fn compile(&mut self, fun: DefunExpr) -> Result<*const u8> {
         self.module.clear_context(&mut self.ctx);
-        let name = self.env.lookup_symbol(fun.name).unwrap().to_owned();
+        let name = self.env.lookup_symbol(fun.name).unwrap();
         let mut foldable = false;
         let arity = match &fun.args {
             Args::Foldable => {

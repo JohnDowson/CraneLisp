@@ -129,7 +129,7 @@ impl Lexer {
         //     symbol,
         //     start..end
         // );
-        Ok(Token::Symbol(symbol, Span::new(start, end)))
+        Ok(Token::Symbol(symbol.into(), Span::new(start, end)))
     }
 
     pub fn peek_token(&mut self) -> Result<Token> {
