@@ -1,4 +1,4 @@
-use cranelift::codegen::ir::types; //, Function};
+use cranelift::codegen::ir::{types, StackSlot}; //, Function};
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, ModuleError}; //DataContext
@@ -26,7 +26,7 @@ macro_rules! defsym {
         let id = $env.insert_symbol($sym);
         $env.insert_value(
             id,
-            crate::Value::new_func(crate::function::Func::from_fn(
+            crate::Atom::new_func(crate::function::Func::from_fn(
                 $fun as *const u8,
                 $arity,
                 false,
@@ -39,7 +39,7 @@ macro_rules! defsym {
         let id = $env.insert_symbol($sym);
         $env.insert_value(
             id,
-            crate::Value::new_func(crate::function::Func::from_fn(
+            crate::Atom::new_func(crate::function::Func::from_fn(
                 $fun as *const u8,
                 2,
                 false,
@@ -53,7 +53,7 @@ macro_rules! defsym {
         let id = $env.insert_symbol(std::stringify!($fun).into());
         $env.insert_value(
             id,
-            crate::Value::new_func(crate::function::Func::from_fn(
+            crate::Atom::new_func(crate::function::Func::from_fn(
                 $fun as *const u8,
                 $arity,
                 false,
@@ -66,7 +66,7 @@ macro_rules! defsym {
         let id = $env.insert_symbol(std::stringify!($fun).into());
         $env.insert_value(
             id,
-            crate::Value::new_func(crate::function::Func::from_fn(
+            crate::Atom::new_func(crate::function::Func::from_fn(
                 $fun as *const u8,
                 2,
                 false,
@@ -92,7 +92,7 @@ impl<'e> Jit<'e> {
         let id = env.insert_symbol(std::stringify!(cl_alloc_value).into());
         env.insert_value(
             id,
-            crate::Value::new_func(crate::function::Func::from_fn(
+            crate::Atom::new_func(crate::function::Func::from_fn(
                 cl_alloc_value as *const u8,
                 0,
                 true,
@@ -113,7 +113,7 @@ impl<'e> Jit<'e> {
 
     pub fn compile(&mut self, fun: DefunExpr) -> Result<*const u8> {
         self.module.clear_context(&mut self.ctx);
-        let name = self.env.lookup_symbol(fun.name).unwrap().clone();
+        let name = self.env.lookup_symbol(fun.name).unwrap().to_owned();
         let mut foldable = false;
         let arity = match &fun.args {
             Args::Foldable => {
@@ -124,11 +124,11 @@ impl<'e> Jit<'e> {
         };
         self.env.insert_value(
             fun.name,
-            crate::Value::new_func(Func::from_fn(0 as _, arity, false, foldable)),
+            crate::Atom::new_func(Func::from_fn(0 as _, arity, false, foldable)),
         );
         self.translate(fun)?;
 
-        let id = if name == "_" {
+        let id = if &*name == "_" {
             self.module
                 .declare_anonymous_function(&self.ctx.func.signature)?
         } else {
@@ -236,6 +236,32 @@ impl<'e> Jit<'e> {
     }
 }
 
+fn alloc_heap_atom(trans: &mut FunctionTranslator) -> Result<Value> {
+    let mut sig = trans.module.make_signature();
+    sig.returns.push(AbiParam::new(types::R64));
+
+    let callee = trans
+        .module
+        .declare_function("cl_alloc_value", Linkage::Import, &sig)?;
+    let local_callee = trans
+        .module
+        .declare_func_in_func(callee, trans.builder.func);
+
+    let call = trans.builder.ins().call(local_callee, &[]);
+    trans.builder.inst_results(call)[0].okay()
+}
+fn alloc_stack_atom(trans: &mut FunctionTranslator) -> StackSlot {
+    let slot = trans.builder.create_stack_slot(StackSlotData {
+        kind: StackSlotKind::ExplicitSlot,
+        size: 16,
+    });
+    let null = trans.builder.ins().iconst(types::I64, 0);
+
+    trans.builder.ins().stack_store(null, slot, 0);
+    trans.builder.ins().stack_store(null, slot, 8);
+    slot
+}
+
 struct FunctionTranslator<'a, 'e> {
     builder: FunctionBuilder<'a>,
     variables: HashMap<usize, Variable>,
@@ -249,12 +275,6 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
             Expr::Symbol(n, _) => {
                 let var = self.variables.get(&n).expect("Undefined variable");
                 self.builder.use_var(*var).okay()
-                // let mut memflags = MemFlags::new();
-                // memflags.set_aligned();
-                // // tag
-                // self.builder.ins().load(types::I64, memflags, addr, 0);
-                // // value
-                // self.builder.ins().load(types::I64, memflags, addr, 8);
             }
             Expr::Float(n, _) => self.builder.ins().f64const(n).okay(),
             Expr::List(mut exprs, _) if matches!(exprs.first(), Some(Expr::Symbol(..))) => {
@@ -283,9 +303,7 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
                 self.builder.ins().f64const(0).okay()
             }
             Expr::Loop(expr, _) => self.translate_loop(*expr),
-            Expr::Let(name, expr, _) => {
-                self.translate_let(self.env.lookup_symbol(name).unwrap().clone(), *expr)
-            }
+            Expr::Let(name, expr, _) => self.translate_let(name, *expr),
             Expr::Integer(int, _) => {
                 let slot = self.builder.create_stack_slot(StackSlotData {
                     kind: StackSlotKind::ExplicitSlot,
@@ -346,7 +364,7 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
                 .ok_or_else(|| {
                     eprintln!("Undefined in call translation");
                     CranelispError::Eval(EvalError::Undefined(
-                        self.env.lookup_symbol(name).unwrap().clone(),
+                        (&*self.env.lookup_symbol(name).unwrap()).to_owned(),
                         exprs.first().unwrap().span(),
                     ))
                 })?
@@ -367,7 +385,7 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
 
         // Yanked straight from JIT demo
         let callee = self.module.declare_function(
-            self.env.lookup_symbol(name).unwrap(),
+            &*self.env.lookup_symbol(name).unwrap(),
             Linkage::Import,
             &sig,
         )?;
@@ -395,11 +413,9 @@ impl<'a, 'e> FunctionTranslator<'a, 'e> {
         .okay()
     }
 
-    fn translate_let(&mut self, name: String, expr: Expr) -> Result<Value> {
+    fn translate_let(&mut self, id: usize, expr: Expr) -> Result<Value> {
         let val = self.translate_expr(expr)?;
-
-        let n = self.env.insert_symbol(name);
-        let variable = self.variables.get(&n).expect("Undefined");
+        let variable = self.variables.get(&id).expect("Undefined");
         self.builder.def_var(*variable, val);
         val.okay()
     }
@@ -445,51 +461,27 @@ fn declare_variables(
     let mut variables = HashMap::new();
     let mut index = 0;
     let val = builder.block_params(block)[0];
-    let var = declare_variable(
-        types::R64,
-        builder,
-        &mut variables,
-        env,
-        &mut index,
-        "ret".into(),
-    );
+    let ret_sym = env.insert_symbol_str("ret");
+    let var = declare_variable(types::R64, builder, &mut variables, &mut index, ret_sym);
     builder.def_var(var, val);
 
     match &fun.args {
         Args::Foldable => {
+            let a_sym = env.insert_symbol_str("a");
             let val = builder.block_params(block)[1];
-            let var = declare_variable(
-                types::R64,
-                builder,
-                &mut variables,
-                env,
-                &mut index,
-                "a".into(),
-            );
+            let var = declare_variable(types::R64, builder, &mut variables, &mut index, a_sym);
             builder.def_var(var, val);
 
+            let b_sym = env.insert_symbol_str("b");
             let val = builder.block_params(block)[2];
-            let var = declare_variable(
-                types::R64,
-                builder,
-                &mut variables,
-                env,
-                &mut index,
-                "b".into(),
-            );
+            let var = declare_variable(types::R64, builder, &mut variables, &mut index, b_sym);
             builder.def_var(var, val);
         }
         Args::Arglist(args) => {
             for (i, name) in args.iter().enumerate() {
+                let sym = env.insert_symbol(name.clone());
                 let val = builder.block_params(block)[i + 1];
-                let var = declare_variable(
-                    types::R64,
-                    builder,
-                    &mut variables,
-                    env,
-                    &mut index,
-                    name.into(),
-                );
+                let var = declare_variable(types::R64, builder, &mut variables, &mut index, sym);
                 builder.def_var(var, val);
             }
         }
@@ -526,21 +518,14 @@ fn declare_variables_in_expr(
         }
         Expr::Return(None, _) => (),
         Expr::Loop(expr, _) => {
+            let cond_sym = env.insert_symbol_str("loop_cond");
             let zero = builder.ins().iconst(types::I64, 0);
-            let return_variable = declare_variable(
-                types::I64,
-                builder,
-                variables,
-                env,
-                index,
-                "loop_cond".into(),
-            );
+            let return_variable = declare_variable(types::I64, builder, variables, index, cond_sym);
             builder.def_var(return_variable, zero);
             declare_variables_in_expr(*expr, builder, variables, index, env)
         }
         Expr::Let(name, expr, _) => {
-            let name = env.lookup_symbol(name).unwrap().clone();
-            declare_variable(types::F64, builder, variables, env, index, name);
+            declare_variable(types::F64, builder, variables, index, name);
             declare_variables_in_expr(*expr, builder, variables, index, env)
         }
         Expr::Integer(_, _) => (),
@@ -552,13 +537,11 @@ fn declare_variable(
     ty: types::Type,
     builder: &mut FunctionBuilder,
     variables: &mut HashMap<usize, Variable>,
-    env: &mut Env,
     index: &mut usize,
-    name: String,
+    symbol: usize,
 ) -> Variable {
     let var = Variable::new(*index);
-    let n = env.insert_symbol(name);
-    if let std::collections::hash_map::Entry::Vacant(e) = variables.entry(n) {
+    if let std::collections::hash_map::Entry::Vacant(e) = variables.entry(symbol) {
         e.insert(var);
         builder.declare_var(var, ty);
         *index += 1;

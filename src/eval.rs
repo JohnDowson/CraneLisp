@@ -1,20 +1,20 @@
 use somok::Somok;
 pub mod value;
 use crate::{function::Func, jit::Jit, parser::Expr, CranelispError, EvalError, Result, TryRemove};
-pub use value::Value;
+pub use value::Atom;
 
-pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Value> {
+pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Atom> {
     match expr {
-        Expr::String(_s, _) => Value::new_string(_s).okay(),
+        Expr::String(_s, _) => Atom::new_string(_s).okay(),
         ref expr @ Expr::Symbol(s, _) => jit.env.env.get(&s).cloned().ok_or_else(|| {
             eprintln!("Undefined in eval translation");
             CranelispError::Eval(EvalError::Undefined(
-                jit.env.lookup_symbol(s).unwrap().clone(),
+                (&*jit.env.lookup_symbol(s).unwrap()).to_owned(),
                 expr.span(),
             ))
         }),
-        Expr::Float(val, _) => Value::new_float(val).okay(),
-        Expr::Integer(val, _) => Value::new_int(val).okay(),
+        Expr::Float(val, _) => Atom::new_float(val).okay(),
+        Expr::Integer(val, _) => Atom::new_int(val).okay(),
         Expr::List(mut list, _) => {
             let value_store;
             let fun = *match list.try_remove(0) {
@@ -35,7 +35,7 @@ pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Value> {
                 Some(Expr::Let(sym, expr, _)) => {
                     let v = eval(*expr, jit)?;
                     jit.env.env.insert(sym, v);
-                    return Value::NULL.okay();
+                    return Atom::NULL.okay();
                 }
                 Some(expr @ Expr::Return(..)) => return eval(expr, jit),
                 Some(expr @ Expr::Loop(..)) => return eval(expr, jit),
@@ -46,7 +46,6 @@ pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Value> {
                 .into_iter()
                 .map(|e| eval(e, jit))
                 .collect::<Result<Vec<_>>>()?;
-            dbg!(fun);
             unsafe { (*fun.as_func()).call(values) }
         }
         Expr::Quoted(_, _) => todo!("Deal vith evaluating things that shouldn't be evaluated"),
@@ -55,10 +54,10 @@ pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Value> {
             // jit
             let func = Func::jit(jit, *defun_expr)?;
             // store
-            if jit.env.lookup_symbol(name).expect("Symbol is not interned") != "_" {
-                jit.env.env.insert(name, Value::new_func(func));
+            if &*jit.env.lookup_symbol(name).expect("Symbol is not interned") != "_" {
+                jit.env.env.insert(name, Atom::new_func(func));
             };
-            Value::new_func(func).okay()
+            Atom::new_func(func).okay()
         }
         Expr::Let(sym, expr, _) => {
             let val = eval(*expr, jit)?;
@@ -74,17 +73,17 @@ pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Value> {
         }
         Expr::Return(expr, ..) => {
             if let Some(e) = expr {
-                Value::new_return(eval(*e, jit)?).okay()
+                Atom::new_return(eval(*e, jit)?).okay()
             } else {
-                Value::new_return(Value::NULL).okay()
+                Atom::new_return(Atom::NULL).okay()
             }
         }
         Expr::Loop(body, ..) => {
-            let mut last_val = Value::NULL;
+            let mut last_val = Atom::NULL;
             while !matches!(last_val.tag, value::Tag::Return) {
                 last_val = eval(*body.clone(), jit)?;
             }
-            unsafe { *last_val.as_ptr::<Value>() }.okay()
+            unsafe { *last_val.as_ptr::<Atom>() }.okay()
         }
     }
 }

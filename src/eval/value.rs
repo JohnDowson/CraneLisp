@@ -5,54 +5,45 @@ use std::{
     fmt::{Debug, Display},
 };
 
-pub fn cons(v1: Value, v2: Value) -> Value {
-    let tail = Box::leak(Box::new(Pair {
-        value: v2,
-        next: Value::NULL,
-    }));
-    let head = Pair {
-        value: v1,
-        next: Value {
-            tag: Tag::Ptr,
-            value: tail as *mut _ as _,
-        },
-    };
+pub fn cons(v1: Atom, v2: Atom) -> Atom {
+    let v1 = v1.boxed().leak();
+    let v2 = v2.boxed().leak();
+    let pair = Pair::new(v1, v2);
 
-    Value::new_pair(Box::leak(Box::new(head)))
+    Atom::new_pair(pair.boxed().leak())
 }
-pub fn head(v: Value) -> Value {
-    let value = v.as_pair().value;
-    Value::new_pair(Box::leak(Box::new(Pair {
-        value,
-        next: Value::NULL,
-    })))
+pub fn head(v: &Atom) -> *mut Atom {
+    unsafe { *v.as_pair() }.car
 }
-pub fn tail(v: Value) -> Value {
-    v.as_pair().next
+pub fn tail(v: &Atom) -> *mut Atom {
+    unsafe { *v.as_pair() }.cdr
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Pair {
-    pub value: Value,
-    pub next: Value,
+    pub car: *mut Atom,
+    pub cdr: *mut Atom,
+}
+
+impl Pair {
+    pub fn new(car: *mut Atom, cdr: *mut Atom) -> Self {
+        Self { car, cdr }
+    }
 }
 
 impl Debug for Pair {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("")
-            .field(&self.value)
-            .field(&self.next)
-            .finish()
+        unsafe { write!(f, "( {:?} . {:?})", &*self.car, &*self.cdr) }
     }
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct Value {
+pub struct Atom {
     pub tag: Tag,
     value: u64,
 }
-impl Value {
+impl Atom {
     pub const NULL: Self = Self {
         tag: Tag::Null,
         value: 0,
@@ -109,8 +100,8 @@ impl Value {
             value: cstring as u64,
         }
     }
-    pub fn new_return(value: Value) -> Self {
-        let value = value.boxed().leak() as *mut Value as u64;
+    pub fn new_return(value: Atom) -> Self {
+        let value = value.boxed().leak() as *mut Atom as u64;
         Self {
             tag: Tag::Return,
             value,
@@ -159,13 +150,13 @@ impl Value {
         }
     }
 
-    pub fn as_pair(&self) -> &'static mut Pair {
+    pub fn as_pair(&self) -> *mut Pair {
         match self.tag {
             Tag::Null => panic!("Can't cast Null to Pair"),
             Tag::Int => panic!("Can't cast Int to Pair"),
             Tag::Float => panic!("Can't cast Float to Pair"),
             Tag::Ptr => panic!("Can't cast Ptr to Pair"),
-            Tag::Pair => unsafe { std::mem::transmute(self.value) },
+            Tag::Pair => self.value as *mut _,
             Tag::Func => panic!("Can't cast Func to Pair"),
             Tag::Bool => panic!("Can't cast Bool to Pair"),
             Tag::String => todo!(),
@@ -214,41 +205,41 @@ impl Value {
     }
 }
 
-impl Debug for Value {
+impl Debug for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?} ", self.tag)?;
         match self.tag {
             Tag::Null => ().okay(),
             Tag::Int => write!(f, "{:?}", self.as_int()),
             Tag::Float => write!(f, "{:?}", self.as_float()),
-            Tag::Ptr => write!(f, "{:?}", unsafe { *self.as_ptr::<Value>() }),
-            Tag::Pair => write!(f, "{:?}", self.as_pair()),
+            Tag::Ptr => write!(f, "{:?}", unsafe { *self.as_ptr::<Atom>() }),
+            Tag::Pair => write!(f, "{:?}", unsafe { &*self.as_pair() }),
             Tag::Func => write!(f, "{:?}", unsafe { *self.as_func() }),
             Tag::Bool => write!(f, "{:?}", self.as_bool()),
             Tag::String => write!(f, "{:?}", self.as_string()),
-            Tag::Return => write!(f, "{:?}", unsafe { *self.as_ptr::<Value>() }),
+            Tag::Return => write!(f, "{:?}", unsafe { *self.as_ptr::<Atom>() }),
         }
     }
 }
 
-impl Display for Value {
+impl Display for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.tag {
             Tag::Null => write!(f, "Null"),
             Tag::Int => write!(f, "{:?}", self.as_int()),
             Tag::Float => write!(f, "{:?}", self.as_float()),
-            Tag::Ptr => write!(f, "{:?}", unsafe { *self.as_ptr::<Value>() }),
-            Tag::Pair => write!(f, "{:?}", self.as_pair()),
+            Tag::Ptr => write!(f, "{:?}", unsafe { &*self.as_ptr::<Atom>() }),
+            Tag::Pair => write!(f, "{:?}", unsafe { &*self.as_pair() }),
             Tag::Func => write!(f, "Function"),
             Tag::Bool => write!(f, "{:?}", self.as_bool()),
             Tag::String => write!(f, "{:?}", self.as_string()),
-            Tag::Return => write!(f, "{:?}", unsafe { *self.as_ptr::<Value>() }),
+            Tag::Return => write!(f, "{:?}", unsafe { &*self.as_ptr::<Atom>() }),
         }
     }
 }
 
 #[repr(i64)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub enum Tag {
     Null = 0,
     Int = 1,
@@ -259,4 +250,20 @@ pub enum Tag {
     Bool = 6,
     String = 7,
     Return = 8,
+}
+
+impl Debug for Tag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Null => write!(f, "Null"),
+            Self::Int => write!(f, "Int"),
+            Self::Float => write!(f, "Float"),
+            Self::Ptr => write!(f, "Ptr"),
+            Self::Pair => write!(f, "Pair"),
+            Self::Func => write!(f, "Func"),
+            Self::Bool => write!(f, "Bool"),
+            Self::String => write!(f, "String"),
+            Self::Return => write!(f, "Return"),
+        }
+    }
 }

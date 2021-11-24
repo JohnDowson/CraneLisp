@@ -28,38 +28,81 @@ pub mod jit;
 pub mod lexer;
 pub mod list;
 pub mod parser;
-pub use errors::*;
-use eval::Value;
-use fnv::FnvHashMap;
-use somok::Somok;
 
+use std::ops::Deref;
+
+pub use errors::*;
+use eval::Atom;
+use fnv::FnvHashMap;
+use somok::{Leaksome, Somok};
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
+
+#[derive(Copy, Clone, Debug)]
+pub struct Symbol {
+    name: &'static str,
+}
+impl Deref for Symbol {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.name
+    }
+}
 
 #[derive(Default, Debug)]
 pub struct Env {
-    pub env: FnvHashMap<usize, Value>,
-    pub symbols: Vec<String>,
+    pub env: FnvHashMap<usize, Atom>,
+    symbol_ids: FnvHashMap<&'static str, usize>,
+    symbols: Vec<Symbol>,
+    last_symbol_id: Option<usize>,
 }
 
 impl Env {
-    pub fn insert_symbol(&mut self, sym: String) -> usize {
-        self.symbols
-            .iter()
-            .position(|s| s == &sym)
-            .unwrap_or_else(|| {
-                let id = self.symbols.len();
-                self.symbols.push(sym);
+    pub fn insert_symbol_str(&mut self, sym: &'static str) -> usize {
+        let symbol_exists = self.symbol_ids.keys().any(|&s| sym == s);
+        if symbol_exists {
+            *self.symbol_ids.get(sym).unwrap()
+        } else {
+            self.symbols.push(Symbol { name: sym });
+            let id = if let Some(mut id) = self.last_symbol_id {
+                id += 1;
+                self.last_symbol_id = Some(id);
                 id
-            })
+            } else {
+                self.last_symbol_id = 0.some();
+                0
+            };
+            self.symbol_ids.insert(sym, id);
+            id
+        }
     }
-    pub fn lookup_symbol(&self, sym_id: usize) -> Option<&String> {
-        self.symbols.get(sym_id)
+    pub fn insert_symbol(&mut self, sym: String) -> usize {
+        let symbol_exists = self.symbol_ids.keys().any(|&s| sym == s);
+        if symbol_exists {
+            *self.symbol_ids.get(&*sym).unwrap()
+        } else {
+            let sym = sym.boxed().leak();
+            self.symbols.push(Symbol { name: sym });
+            let id = if let Some(mut id) = self.last_symbol_id {
+                id += 1;
+                self.last_symbol_id = Some(id);
+                id
+            } else {
+                self.last_symbol_id = 0.some();
+                0
+            };
+            self.symbol_ids.insert(sym, id);
+            id
+        }
     }
-    pub fn insert_value(&mut self, id: usize, value: Value) {
+    pub fn lookup_symbol(&self, sym_id: usize) -> Option<Symbol> {
+        self.symbols.get(sym_id).copied()
+    }
+    pub fn insert_value(&mut self, id: usize, value: Atom) {
         self.env.insert(id, value);
     }
-    pub fn lookup_value(&self, sym_id: usize) -> Option<&Value> {
-        self.env.get(&sym_id)
+    pub fn lookup_value(&self, sym_id: usize) -> Option<Atom> {
+        self.env.get(&sym_id).copied()
     }
 }
 trait TryRemove {
@@ -135,64 +178,64 @@ impl ariadne::Span for Span {
 pub mod libcl {
     use somok::{Leaksome, Somok};
 
-    use crate::eval::value::{Tag, Value};
+    use crate::eval::value::{Atom, Tag};
 
     #[no_mangle]
-    pub extern "C" fn cl_print(ret: &mut Value, a: &Value) {
+    pub extern "C" fn cl_print(ret: &mut Atom, a: &Atom) {
         println!("{}", a);
-        *ret = Value::NULL
+        *ret = Atom::NULL
     }
     #[no_mangle]
-    pub extern "C" fn cl_eprint(ret: &mut Value, a: &Value) {
+    pub extern "C" fn cl_eprint(ret: &mut Atom, a: &Atom) {
         eprintln!("{:?}", a);
-        *ret = Value::NULL
+        *ret = Atom::NULL
     }
 
     #[no_mangle]
-    pub extern "C" fn cl_alloc_value(_ret: &mut Value) {
-        Value::NULL.boxed().leak();
+    pub extern "C" fn cl_alloc_value() -> *mut Atom {
+        Atom::NULL.boxed().leak()
     }
 
     #[no_mangle]
-    pub extern "C" fn add(ret: &mut Value, a: &Value, b: &Value) {
+    pub extern "C" fn add(ret: &mut Atom, a: &Atom, b: &Atom) {
         match (a.tag, b.tag) {
-            (Tag::Int, Tag::Int) => *ret = Value::new_int(a.as_int() + b.as_int()),
-            (Tag::Int, Tag::Float) => *ret = Value::new_int(a.as_int() + b.as_float() as i64),
-            (Tag::Float, Tag::Int) => *ret = Value::new_float(a.as_float() + b.as_int() as f64),
-            (Tag::Float, Tag::Float) => *ret = Value::new_float(a.as_float() + b.as_float()),
+            (Tag::Int, Tag::Int) => *ret = Atom::new_int(a.as_int() + b.as_int()),
+            (Tag::Int, Tag::Float) => *ret = Atom::new_int(a.as_int() + b.as_float() as i64),
+            (Tag::Float, Tag::Int) => *ret = Atom::new_float(a.as_float() + b.as_int() as f64),
+            (Tag::Float, Tag::Float) => *ret = Atom::new_float(a.as_float() + b.as_float()),
             _ => eprintln!("Can't add non-numbers {:?} + {:?}", a, b),
         }
     }
 
     #[no_mangle]
-    pub extern "C" fn sub(ret: &mut Value, a: &Value, b: &Value) {
+    pub extern "C" fn sub(ret: &mut Atom, a: &Atom, b: &Atom) {
         match (a.tag, b.tag) {
-            (Tag::Int, Tag::Int) => *ret = Value::new_int(a.as_int() - b.as_int()),
-            (Tag::Int, Tag::Float) => *ret = Value::new_int(a.as_int() - b.as_float() as i64),
-            (Tag::Float, Tag::Int) => *ret = Value::new_float(a.as_float() - b.as_int() as f64),
-            (Tag::Float, Tag::Float) => *ret = Value::new_float(a.as_float() - b.as_float()),
+            (Tag::Int, Tag::Int) => *ret = Atom::new_int(a.as_int() - b.as_int()),
+            (Tag::Int, Tag::Float) => *ret = Atom::new_int(a.as_int() - b.as_float() as i64),
+            (Tag::Float, Tag::Int) => *ret = Atom::new_float(a.as_float() - b.as_int() as f64),
+            (Tag::Float, Tag::Float) => *ret = Atom::new_float(a.as_float() - b.as_float()),
             _ => eprintln!("Can't subtract non-numbers"),
         }
     }
 
     #[no_mangle]
-    pub extern "C" fn less_than(ret: &mut Value, a: &Value, b: &Value) {
+    pub extern "C" fn less_than(ret: &mut Atom, a: &Atom, b: &Atom) {
         match (a.tag, b.tag) {
-            (Tag::Int, Tag::Int) => *ret = Value::new_bool(a.as_int() < b.as_int()),
-            (Tag::Int, Tag::Float) => *ret = Value::new_bool(a.as_int() < b.as_float() as i64),
-            (Tag::Float, Tag::Int) => *ret = Value::new_bool(a.as_float() < b.as_int() as f64),
-            (Tag::Float, Tag::Float) => *ret = Value::new_bool(a.as_float() < b.as_float()),
+            (Tag::Int, Tag::Int) => *ret = Atom::new_bool(a.as_int() < b.as_int()),
+            (Tag::Int, Tag::Float) => *ret = Atom::new_bool(a.as_int() < b.as_float() as i64),
+            (Tag::Float, Tag::Int) => *ret = Atom::new_bool(a.as_float() < b.as_int() as f64),
+            (Tag::Float, Tag::Float) => *ret = Atom::new_bool(a.as_float() < b.as_float()),
             _ => eprintln!("Can't subtract non-numbers"),
         }
     }
 
     #[no_mangle]
-    pub extern "C" fn more_than(ret: &mut Value, a: &Value, b: &Value) {
+    pub extern "C" fn more_than(ret: &mut Atom, a: &Atom, b: &Atom) {
         match (a.tag, b.tag) {
-            (Tag::Int, Tag::Int) => *ret = Value::new_bool(a.as_int() > b.as_int()),
-            (Tag::Int, Tag::Float) => *ret = Value::new_bool(a.as_int() > b.as_float() as i64),
-            (Tag::Float, Tag::Int) => *ret = Value::new_bool(a.as_float() > b.as_int() as f64),
-            (Tag::Float, Tag::Float) => *ret = Value::new_bool(a.as_float() > b.as_float()),
+            (Tag::Int, Tag::Int) => *ret = Atom::new_bool(a.as_int() > b.as_int()),
+            (Tag::Int, Tag::Float) => *ret = Atom::new_bool(a.as_int() > b.as_float() as i64),
+            (Tag::Float, Tag::Int) => *ret = Atom::new_bool(a.as_float() > b.as_int() as f64),
+            (Tag::Float, Tag::Float) => *ret = Atom::new_bool(a.as_float() > b.as_float()),
             _ => eprintln!("Can't subtract non-numbers"),
         }
     }

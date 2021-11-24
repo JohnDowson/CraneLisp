@@ -2,7 +2,7 @@ use somok::Somok;
 
 use crate::{
     errors,
-    eval::Value,
+    eval::Atom,
     jit::Jit,
     parser::{Arglist, Args, DefunExpr, Expr},
     CranelispError, EvalError, Result,
@@ -19,24 +19,24 @@ pub struct Func {
 // extern "C" fn does not implement FnMut
 macro_rules! transmute {
     ($ptr:expr; $($typ:ty),+) => {
-        std::mem::transmute::<*const u8, extern "C" fn(*mut Value, $(&$typ),+)>($ptr)
+        std::mem::transmute::<*const u8, extern "C" fn(*mut Atom, $(&$typ),+)>($ptr)
     };
     ($ptr:expr) => {
-        std::mem::transmute::<*const u8, extern "C" fn(*mut Value)>($ptr)
+        std::mem::transmute::<*const u8, extern "C" fn(*mut Atom)>($ptr)
     };
 }
 
 macro_rules! call {
     ($args:expr; $fn:expr; $($n:literal),+) => {
         {
-            let mut ret = Value::NULL;
+            let mut ret = Atom::NULL;
             $fn(&mut ret, $(&$args[$n]),+);
             ret
         }
     };
     ($fn:expr) => {
         {
-            let mut ret = Value::NULL;
+            let mut ret = Atom::NULL;
             $fn(&mut ret);
             ret
         }
@@ -71,7 +71,7 @@ impl Func {
         .okay()
     }
 
-    pub fn call(&self, args: Vec<Value>) -> Result<Value> {
+    pub fn call(&self, args: Vec<Atom>) -> Result<Atom> {
         if self.arity > args.len() as u8 && !self.foldable {
             return errors::eval(EvalError::ArityMismatch);
         }
@@ -82,23 +82,23 @@ impl Func {
                     call!(func).okay()
                 }
                 1 => {
-                    let func = transmute!(self.body; Value);
+                    let func = transmute!(self.body; Atom);
                     call!(args; func; 0).okay()
                 }
                 2 if self.foldable => {
-                    let func = transmute!(self.body; Value, Value);
+                    let func = transmute!(self.body; Atom, Atom);
                     #[allow(clippy::redundant_closure)]
                     args.into_iter()
                         .reduce(|acc, n| call!([acc, n]; func; 0, 1))
-                        .unwrap_or(Value::NULL)
+                        .unwrap_or(Atom::NULL)
                         .okay()
                 }
                 2 => {
-                    let func = transmute!(self.body; Value, Value);
+                    let func = transmute!(self.body; Atom, Atom);
                     call!(args; func; 0, 1).okay()
                 }
                 3 => {
-                    let func = transmute!(self.body; Value, Value, Value);
+                    let func = transmute!(self.body; Atom, Atom, Atom);
                     call!(args; func; 0, 1, 2).okay()
                 }
 
@@ -112,7 +112,7 @@ impl Debug for Func {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "Native function arity: {:?} stack return: {:?} body ptr:{:?}",
+            "{{ arity: {:?}, stack_return: {:?}, body: {:?} }}",
             self.arity, self.stack_return, self.body
         )
     }
