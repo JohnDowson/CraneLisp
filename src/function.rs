@@ -1,120 +1,36 @@
 use somok::Somok;
 
 use crate::{
-    errors,
     eval::Atom,
     jit::Jit,
-    parser::{Arglist, Args, DefunExpr, Expr},
+    parser::{Arglist, DefunExpr, Expr},
     CranelispError, EvalError, Result,
 };
 use std::{fmt::Debug, str::FromStr};
 
 #[derive(Clone, Copy)]
 pub struct Func {
-    pub arity: u8,
-    pub stack_return: bool,
-    pub foldable: bool,
-    pub body: *const u8,
-}
-// extern "C" fn does not implement FnMut
-macro_rules! transmute {
-    ($ptr:expr; $($typ:ty),+) => {
-        std::mem::transmute::<*const u8, extern "C" fn(*mut Atom, $(&$typ),+)>($ptr)
-    };
-    ($ptr:expr) => {
-        std::mem::transmute::<*const u8, extern "C" fn(*mut Atom)>($ptr)
-    };
-}
-
-macro_rules! call {
-    ($args:expr; $fn:expr; $($n:literal),+) => {
-        {
-            let mut ret = Atom::NULL;
-            $fn(&mut ret, $(&$args[$n]),+);
-            ret
-        }
-    };
-    ($fn:expr) => {
-        {
-            let mut ret = Atom::NULL;
-            $fn(&mut ret);
-            ret
-        }
-    };
+    pub body: unsafe extern "C" fn(usize, *mut Atom) -> *mut Atom,
 }
 
 impl Func {
-    pub fn from_fn(body: *const u8, arity: u8, stack_return: bool, foldable: bool) -> Self {
-        Self {
-            arity,
-            stack_return,
-            body,
-            foldable,
-        }
+    pub fn from_fn(body: unsafe extern "C" fn(usize, *mut Atom) -> *mut Atom) -> Self {
+        Self { body }
     }
     pub fn jit(jit: &mut Jit, defun: DefunExpr) -> Result<Self> {
-        let mut foldable = false;
-        let arity = match &defun.args {
-            Args::Foldable => {
-                foldable = true;
-                2
-            }
-            Args::Arglist(a) => a.len() as u8,
-        };
-        let body = jit.compile(defun)?;
-        Self {
-            arity,
-            stack_return: false,
-            body,
-            foldable,
-        }
-        .okay()
+        let body = unsafe { std::mem::transmute::<_, _>(jit.compile(defun)?) };
+        Self { body }.okay()
     }
 
-    pub fn call(&self, args: Vec<Atom>) -> Result<Atom> {
-        if self.arity > args.len() as u8 && !self.foldable {
-            return errors::eval(EvalError::ArityMismatch);
-        }
-        unsafe {
-            match self.arity {
-                0 => {
-                    let func = transmute!(self.body);
-                    call!(func).okay()
-                }
-                1 => {
-                    let func = transmute!(self.body; Atom);
-                    call!(args; func; 0).okay()
-                }
-                2 if self.foldable => {
-                    let func = transmute!(self.body; Atom, Atom);
-                    #[allow(clippy::redundant_closure)]
-                    args.into_iter()
-                        .reduce(|acc, n| call!([acc, n]; func; 0, 1))
-                        .unwrap_or(Atom::NULL)
-                        .okay()
-                }
-                2 => {
-                    let func = transmute!(self.body; Atom, Atom);
-                    call!(args; func; 0, 1).okay()
-                }
-                3 => {
-                    let func = transmute!(self.body; Atom, Atom, Atom);
-                    call!(args; func; 0, 1, 2).okay()
-                }
-
-                arity => todo!("arity: {}", arity),
-            }
-        }
+    pub fn call(&self, args: Vec<Atom>) -> Atom {
+        let (count, args) = (args.len(), args.leak().as_mut_ptr());
+        unsafe { *(self.body)(count, args) }
     }
 }
 
 impl Debug for Func {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{{ arity: {:?}, stack_return: {:?}, body: {:?} }}",
-            self.arity, self.stack_return, self.body
-        )
+        write!(f, "{{ body: {:?} }}", self.body as *const u8)
     }
 }
 

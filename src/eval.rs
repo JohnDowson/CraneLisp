@@ -54,7 +54,7 @@ pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Atom> {
                 .into_iter()
                 .map(|e| eval(e, jit))
                 .collect::<Result<Vec<_>>>()?;
-            unsafe { (*fun.as_func()).call(values) }
+            unsafe { (*fun.as_func()).call(values).okay() }
         }
         Expr::Quoted(expr, _) => match *expr {
             Expr::Symbol(s, _) => Atom::new_string(CLString::from_str(&s).unwrap()).okay(),

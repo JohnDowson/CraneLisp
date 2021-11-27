@@ -1,4 +1,4 @@
-use cranelift::codegen::ir::{types, StackSlot}; //, Function};
+use cranelift::codegen::ir::{types, HeapData, HeapStyle, StackSlot}; //, Function};
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, ModuleError};
@@ -13,7 +13,7 @@ use std::str::FromStr;
 use crate::eval::value::{CLString, Symbol, Tag};
 use crate::function::Func;
 use crate::parser::{Args, DefunExpr, Expr};
-use crate::{libcl::*, lookup_value, set_value, Atom, CranelispError, EvalError, Result, Span};
+use crate::{libcl::*, lookup_value, set_value, Atom, CranelispError, EvalError, Result};
 
 pub struct Jit {
     builder_ctx: FunctionBuilderContext,
@@ -25,82 +25,20 @@ pub struct Jit {
 
 macro_rules! defsym {
     // Named
-    ($builder:expr; $arity:expr; $sym:expr => $fun:path) => {
+    ($builder:expr; $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
         crate::set_value(crate::eval::value::Symbol::new_with_atom(
             $sym,
-            crate::Atom::new_func(crate::function::Func::from_fn(
-                $fun as *const u8,
-                $arity,
-                false,
-                false,
-            )),
-        ));
-    };
-    ($builder:expr; FOLDABLE $sym:expr => $fun:path) => {
-        $builder.symbol($sym, $fun as *const u8);
-        $builder.symbol($sym, $fun as *const u8);
-        crate::set_value(crate::eval::value::Symbol::new_with_atom(
-            $sym,
-            crate::Atom::new_func(crate::function::Func::from_fn(
-                $fun as *const u8,
-                2,
-                false,
-                true,
-            )),
-        ));
-    };
-    ($builder:expr; FOLDABLE $sym:expr => $fun:path) => {
-        $builder.symbol($sym, $fun as *const u8);
-        $builder.symbol($sym, $fun as *const u8);
-        crate::set_value(crate::eval::value::Symbol::new_with_atom(
-            $sym,
-            crate::Atom::new_func(crate::function::Func::from_fn(
-                $fun as *const u8,
-                2,
-                true,
-                false,
-            )),
+            crate::Atom::new_func(crate::function::Func::from_fn($fun)),
         ));
     };
     // Autoname
-    ($builder:expr; $arity:expr; $fun:path) => {
+    ($builder:expr; $fun:path) => {
         $builder.symbol(std::stringify!($fun), $fun as *const u8);
         $builder.symbol(stringify!($fun), $fun as *const u8);
         crate::set_value(crate::eval::value::Symbol::new_with_atom(
             stringify!($fun),
-            crate::Atom::new_func(crate::function::Func::from_fn(
-                $fun as *const u8,
-                $arity,
-                false,
-                false,
-            )),
-        ));
-    };
-    ($builder:expr; FOLDABLE $fun:path) => {
-        $builder.symbol(std::stringify!($fun), $fun as *const u8);
-        $builder.symbol(stringify!($fun), $fun as *const u8);
-        crate::set_value(crate::eval::value::Symbol::new_with_atom(
-            stringify!($fun),
-            crate::Atom::new_func(crate::function::Func::from_fn(
-                $fun as *const u8,
-                2,
-                false,
-                true,
-            )),
-        ));
-    };
-    ($builder:expr; STACK $fun:path) => {
-        $builder.symbol(std::stringify!($fun), $fun as *const u8);
-        $builder.symbol(stringify!($fun), $fun as *const u8);
-        crate::set_value(crate::eval::value::Symbol::new_with_atom(
-            stringify!($fun),
-            crate::Atom::new_func(crate::function::Func::from_fn(
-                $fun as *const u8,
-                2,
-                true,
-                false,
-            )),
+            crate::Atom::new_func(crate::function::Func::from_fn($fun)),
         ));
     };
 }
@@ -110,44 +48,17 @@ impl Jit {
         let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
         builder.hotswap(true);
 
-        defsym!(builder; 1; cl_print);
-        defsym!(builder; 1; cl_eprint);
-        defsym!(builder; 2; "setf" => setf);
-        defsym!(builder; FOLDABLE "+".to_string() => add);
-        defsym!(builder; FOLDABLE "-".to_string() => sub);
-        defsym!(builder; 2; "<".to_string() => less_than);
-        defsym!(builder; 2; ">".to_string() => more_than);
+        defsym!(builder; cl_print);
+        defsym!(builder; cl_eprint);
+        defsym!(builder; setf);
+        defsym!(builder; "+".to_string() => add);
+        defsym!(builder; "-".to_string() => sub);
+        defsym!(builder; "<".to_string() => less_than);
+        defsym!(builder; ">".to_string() => more_than);
+        defsym!(builder; cl_alloc_value);
+        defsym!(builder; car);
+        defsym!(builder; cdr);
 
-        builder.symbol(std::stringify!(cl_alloc_value), cl_alloc_value as *const u8);
-        set_value(crate::eval::value::Symbol::new_with_atom(
-            std::stringify!(cl_alloc_value),
-            Atom::new_func(crate::function::Func::from_fn(
-                cl_alloc_value as *const u8,
-                1,
-                true,
-                false,
-            )),
-        ));
-        builder.symbol(std::stringify!(car), car as *const u8);
-        set_value(crate::eval::value::Symbol::new_with_atom(
-            std::stringify!(car),
-            Atom::new_func(crate::function::Func::from_fn(
-                cl_alloc_value as *const u8,
-                1,
-                true,
-                false,
-            )),
-        ));
-        builder.symbol(std::stringify!(cdr), cdr as *const u8);
-        set_value(crate::eval::value::Symbol::new_with_atom(
-            std::stringify!(cdr),
-            Atom::new_func(crate::function::Func::from_fn(
-                cl_alloc_value as *const u8,
-                1,
-                true,
-                false,
-            )),
-        ));
         let module = JITModule::new(builder);
         Jit {
             builder_ctx: FunctionBuilderContext::new(),
@@ -160,19 +71,17 @@ impl Jit {
 
     pub fn compile(&mut self, fun: DefunExpr) -> Result<*const u8> {
         self.module.clear_context(&mut self.ctx);
-        let mut foldable = false;
-        let arity = match &fun.args {
-            Args::Foldable => {
-                foldable = true;
-                2
-            }
-            Args::Arglist(a) => a.len() as u8,
-        };
+        let name = fun.name.clone();
+
         set_value(Symbol {
-            name: fun.name.clone(),
-            val: Atom::new_func(Func::from_fn(0 as _, arity, false, foldable))
-                .boxed()
-                .leak(),
+            name,
+            val: Atom::new_func(Func::from_fn(unsafe {
+                #[allow(invalid_value)]
+                // This is used as a marker
+                std::mem::transmute(0usize)
+            }))
+            .boxed()
+            .leak(),
         });
         let name = fun.name.clone();
         self.translate(fun)?;
@@ -207,34 +116,27 @@ impl Jit {
         self.module.clear_context(&mut self.ctx);
         self.module.finalize_definitions();
         let code = self.module.get_finalized_function(id);
+        set_value(Symbol {
+            name,
+            val: Atom::new_func(Func::from_fn(unsafe { std::mem::transmute(code) }))
+                .boxed()
+                .leak(),
+        });
         Ok(code)
     }
 
     fn translate(&mut self, fun: DefunExpr) -> Result<()> {
-        // Return slot
         self.ctx
             .func
             .signature
             .params
             .push(AbiParam::new(types::R64));
-        match &fun.args {
-            Args::Foldable => {
-                self.ctx
-                    .func
-                    .signature
-                    .params
-                    .extend([AbiParam::new(types::R64), AbiParam::new(types::R64)]);
-            }
-            Args::Arglist(args) => {
-                for _ in args {
-                    self.ctx
-                        .func
-                        .signature
-                        .params
-                        .push(AbiParam::new(types::R64))
-                }
-            }
-        }
+
+        self.ctx
+            .func
+            .signature
+            .returns
+            .push(AbiParam::new(types::R64));
 
         let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_ctx);
 
@@ -253,26 +155,9 @@ impl Jit {
         let mut memflags = MemFlags::new();
         memflags.set_aligned();
 
-        let return_addr = trans.translate_expr(fun.body)?;
-        let return_tag = trans
-            .builder
-            .ins()
-            .load(types::I64, memflags, return_addr, 0);
+        let return_value = trans.translate_expr(fun.body)?;
 
-        let return_value = trans
-            .builder
-            .ins()
-            .load(types::I64, memflags, return_addr, 8);
-
-        let ret_var = trans.builder.use_var(*trans.variables.get("ret").unwrap());
-
-        // here we should write return_value to the return slot
-        trans.builder.ins().store(memflags, return_tag, ret_var, 0);
-        trans
-            .builder
-            .ins()
-            .store(memflags, return_value, ret_var, 8);
-        trans.builder.ins().return_(&[]);
+        trans.builder.ins().return_(&[return_value]);
 
         trans.builder.finalize();
         if self.show_clir {
@@ -366,7 +251,7 @@ impl<'a> FunctionTranslator<'a> {
                 }
             }
             Expr::List(exprs, _) => {
-                let mut list_ret = self.builder.ins().iconst(types::I64, 0);
+                let mut list_ret = alloc_heap_atom(self)?;
                 for expr in exprs {
                     list_ret = self.translate_expr(expr)?;
                 }
@@ -507,19 +392,7 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn translate_call(&mut self, name: SmolStr, exprs: Vec<Expr>) -> Result<Value> {
-        let signature = self
-            .variables
-            .get(&name)
-            .map(|var| self.builder.use_var(*var))
-            .or_else(|| {
-                let var = lookup_value(name.clone())? as i64;
-                self.builder.ins().iconst(types::I64, var).some()
-            })
-            .ok_or_else(|| {
-                CranelispError::Eval(EvalError::Undefined(name.clone().into(), Span::point(0)))
-            })?;
-
-        let signature = unsafe {
+        let func = unsafe {
             *(*lookup_value(dbg! {name.clone()}).ok_or_else(|| {
                 eprintln!("Undefined in call translation");
                 CranelispError::Eval(EvalError::Undefined(
@@ -530,68 +403,90 @@ impl<'a> FunctionTranslator<'a> {
             .as_func()
         };
 
+        // malloc
+        let mut m_sig = self.module.make_signature();
+        m_sig.params.push(AbiParam::new(types::I64));
+        m_sig.returns.push(AbiParam::new(types::R64));
+        let malloc = self
+            .module
+            .declare_function("malloc", Linkage::Import, &m_sig)?;
+        let local_malloc = self.module.declare_func_in_func(malloc, self.builder.func);
+
         let mut sig = self.module.make_signature();
-        if signature.stack_return {
-            sig.returns.push(AbiParam::new(types::R64));
-        } else {
-            // Return slot
-            sig.params.push(AbiParam::new(types::R64));
-        }
 
-        for _ in 0..signature.arity {
-            sig.params.push(AbiParam::new(types::R64));
-        }
+        sig.returns.push(AbiParam::new(types::R64));
 
-        if signature.body as u64 != 0 {
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::R64));
+
+        #[allow(clippy::fn_to_numeric_cast)]
+        if func.body as u64 != 0 {
             let sig = self.builder.func.import_signature(sig);
-            let mut arg_values = Vec::new();
-            let callee = self.builder.ins().iconst(types::I64, signature.body as i64);
+            let callee = self.builder.ins().iconst(types::I64, func.body as i64);
             let callee = self.builder.ins().raw_bitcast(types::R64, callee);
-            if signature.stack_return {
-                for arg in exprs {
-                    arg_values.push(self.translate_expr(arg)?)
-                }
-                let call = self.builder.ins().call_indirect(sig, callee, &arg_values);
-                self.builder.inst_results(call)[0]
-            } else {
-                // allocate return slot
-                let ret = self
-                    .builder
-                    .create_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 31));
-                let ret = self.builder.ins().stack_addr(types::R64, ret, 0);
-                arg_values.push(ret);
-                for arg in exprs {
-                    arg_values.push(self.translate_expr(arg)?)
-                }
-                self.builder.ins().call_indirect(sig, callee, &arg_values);
-                ret
+
+            let mut arg_values = Vec::new();
+
+            let args = exprs
+                .into_iter()
+                .map(|a| self.translate_expr(a))
+                .collect::<Result<Vec<_>>>()?;
+            let count = self.builder.ins().iconst(types::I64, args.len() as i64);
+
+            // call malloc
+            let count_bytes = self
+                .builder
+                .ins()
+                .iconst(types::I64, (args.len() * 8) as i64);
+            let call = self.builder.ins().call(local_malloc, &[count_bytes]);
+            let heap_addr = self.builder.inst_results(call)[0];
+
+            let mut memflags = MemFlags::new();
+            memflags.set_aligned();
+            for (i, arg) in args.into_iter().enumerate() {
+                self.builder
+                    .ins()
+                    .store(memflags, arg, heap_addr, (i * 16) as i32);
             }
-            .okay()
+
+            arg_values.push(count);
+            arg_values.push(heap_addr);
+
+            let call = self.builder.ins().call_indirect(sig, callee, &arg_values);
+            self.builder.inst_results(call)[0].okay()
         } else {
-            // Yanked straight from JIT demo
             let callee = self.module.declare_function(&name, Linkage::Import, &sig)?;
             let local_callee = self.module.declare_func_in_func(callee, self.builder.func);
+
             let mut arg_values = Vec::new();
-            if signature.stack_return {
-                for arg in exprs {
-                    arg_values.push(self.translate_expr(arg)?)
-                }
-                let call = self.builder.ins().call(local_callee, &arg_values);
-                self.builder.inst_results(call)[0]
-            } else {
-                // allocate return slot
-                let ret = self
-                    .builder
-                    .create_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 31));
-                let ret = self.builder.ins().stack_addr(types::R64, ret, 0);
-                arg_values.push(ret);
-                for arg in exprs {
-                    arg_values.push(self.translate_expr(arg)?)
-                }
-                self.builder.ins().call(local_callee, &arg_values);
-                ret
+
+            let args = exprs
+                .into_iter()
+                .map(|a| self.translate_expr(a))
+                .collect::<Result<Vec<_>>>()?;
+            let count = self.builder.ins().iconst(types::I64, args.len() as i64);
+
+            // call malloc
+            let count_bytes = self
+                .builder
+                .ins()
+                .iconst(types::I64, (args.len() * 8) as i64);
+            let call = self.builder.ins().call(local_malloc, &[count_bytes]);
+            let heap_addr = self.builder.inst_results(call)[0];
+
+            let mut memflags = MemFlags::new();
+            memflags.set_aligned();
+            for (i, arg) in args.into_iter().enumerate() {
+                self.builder
+                    .ins()
+                    .store(memflags, arg, heap_addr, (i * 16) as i32);
             }
-            .okay()
+
+            arg_values.push(count);
+            arg_values.push(heap_addr);
+
+            let call = self.builder.ins().call(local_callee, &arg_values);
+            self.builder.inst_results(call)[0].okay()
         }
     }
 
@@ -641,28 +536,14 @@ fn declare_variables(
 ) -> HashMap<SmolStr, Variable> {
     let mut variables = HashMap::new();
     let mut index = 0;
-    let val = builder.block_params(block)[0];
-    let var = declare_variable(
-        types::R64,
-        builder,
-        &mut variables,
-        &mut index,
-        "ret".into(),
-    );
-    builder.def_var(var, val);
 
     match &fun.args {
         Args::Foldable => {
-            let val = builder.block_params(block)[1];
-            let var = declare_variable(types::R64, builder, &mut variables, &mut index, "a".into());
-            builder.def_var(var, val);
-            let val = builder.block_params(block)[2];
-            let var = declare_variable(types::R64, builder, &mut variables, &mut index, "b".into());
-            builder.def_var(var, val);
+            unreachable!()
         }
         Args::Arglist(args) => {
             for (i, name) in args.iter().enumerate() {
-                let val = builder.block_params(block)[i + 1];
+                let val = builder.block_params(block)[i];
                 let var = declare_variable(
                     types::R64,
                     builder,

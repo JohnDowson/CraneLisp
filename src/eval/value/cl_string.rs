@@ -3,7 +3,7 @@ use std::{
     alloc::LayoutError,
     fmt::{Debug, Display},
     marker::PhantomData,
-    ops::{Deref, Index},
+    ops::Deref,
     str::FromStr,
 };
 
@@ -108,6 +108,14 @@ impl<T> CLVector<T> {
         }
     }
 
+    pub fn get_mut(&self, idx: u32) -> Option<&mut T> {
+        if idx >= self.size {
+            None
+        } else {
+            unsafe { (&mut *(self.inner as *mut T).add(idx as usize)).some() }
+        }
+    }
+
     pub fn from_buffer(s: Vec<T>) -> Self {
         let (size, capacity) = {
             if s.capacity() > u32::MAX as usize {
@@ -116,12 +124,7 @@ impl<T> CLVector<T> {
             (s.len() as u32, s.capacity() as u32)
         };
         let inner = s.leak().as_mut_ptr() as _;
-        Self {
-            size,
-            capacity,
-            inner,
-            phantom_t: Default::default(),
-        }
+        unsafe { Self::from_raw_parts(size, capacity, inner) }
     }
     pub fn len(&self) -> usize {
         self.size as usize
@@ -155,14 +158,6 @@ impl<T> CLVector<T> {
 impl<T> Default for CLVector<T> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl<T> Index<usize> for CLVector<T> {
-    type Output = T;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        self.get_ref(index as u32).expect("Index out of range")
     }
 }
 
@@ -257,6 +252,7 @@ impl CLString {
         let mut replaced = self.clone();
         for value in values {
             let pat = match value.tag {
+                Tag::Error => "%e",
                 Tag::Null => "%0",
                 Tag::Int => "%d",
                 Tag::Float => "%f",

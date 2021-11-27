@@ -16,18 +16,20 @@ pub fn list(mut vs: Vec<Atom>) -> Atom {
     .leak();
     let po = p as *mut Atom;
     for v in vs {
-        let p2 = Atom::new_pair(cons(v, Atom::NULL).boxed().leak())
-            .boxed()
-            .leak();
+        let p2 = Atom::new_pair(
+            cons(v.boxed().leak(), Atom::NULL.boxed().leak())
+                .boxed()
+                .leak(),
+        )
+        .boxed()
+        .leak();
         unsafe { (*p.as_pair()).cdr = p2 };
         p = p2;
     }
     unsafe { *po }
 }
 
-pub fn cons(v1: Atom, v2: Atom) -> Pair {
-    let v1 = v1.boxed().leak();
-    let v2 = v2.boxed().leak();
+pub fn cons(v1: *mut Atom, v2: *mut Atom) -> Pair {
     Pair::new(v1, v2)
 }
 pub fn head(v: &Atom) -> *mut Atom {

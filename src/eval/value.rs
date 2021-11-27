@@ -84,6 +84,10 @@ impl Atom {
         value: 1,
     };
     pub const FALSE: Self = Self::NULL;
+    pub const ERROR: Self = Self {
+        tag: Tag::Error,
+        value: 0,
+    };
 
     pub fn new_int(value: i64) -> Self {
         Self {
@@ -144,6 +148,7 @@ impl Atom {
 
     pub fn as_int(&self) -> i64 {
         match self.tag {
+            Tag::Error => todo!(),
             Tag::Null => 0,
             Tag::Int => self.value as _,
             Tag::Float => self.value as f64 as _,
@@ -158,6 +163,7 @@ impl Atom {
 
     pub fn as_float(&self) -> f64 {
         match self.tag {
+            Tag::Error => todo!(),
             Tag::Null => f64::from_bits(self.value),
             Tag::Int => panic!("Can't cast Int to Float"),
             Tag::Float => f64::from_bits(self.value),
@@ -172,6 +178,7 @@ impl Atom {
 
     pub fn as_ptr<T>(&self) -> *mut T {
         match self.tag {
+            Tag::Error => todo!(),
             Tag::Null => panic!("Can't cast Null to Ptr"),
             Tag::Int => panic!("Can't cast Int to Ptr"),
             Tag::Float => panic!("Can't cast Float to Ptr"),
@@ -186,6 +193,7 @@ impl Atom {
 
     pub fn as_pair(&self) -> *mut Pair {
         match self.tag {
+            Tag::Error => todo!(),
             Tag::Null => panic!("Can't cast Null to Pair"),
             Tag::Int => panic!("Can't cast Int to Pair"),
             Tag::Float => panic!("Can't cast Float to Pair"),
@@ -200,6 +208,7 @@ impl Atom {
 
     pub fn as_func(&self) -> *mut Func {
         match self.tag {
+            Tag::Error => todo!(),
             Tag::Null => panic!("Can't cast Null to Func"),
             Tag::Int => panic!("Can't cast Int to Func"),
             Tag::Float => panic!("Can't cast Float to Func"),
@@ -213,6 +222,7 @@ impl Atom {
     }
     pub fn as_bool(&self) -> bool {
         match self.tag {
+            Tag::Error => todo!(),
             Tag::Null => false,
             Tag::Int => true,
             Tag::Float => true,
@@ -226,6 +236,7 @@ impl Atom {
     }
     pub fn as_string(&self) -> &str {
         match self.tag {
+            Tag::Error => todo!(),
             Tag::Null => panic!("Can't cast Null to String"),
             Tag::Int => panic!("Can't cast Int to String"),
             Tag::Float => panic!("Can't cast Float to String"),
@@ -239,6 +250,7 @@ impl Atom {
     }
     pub fn as_symbol(&self) -> &Symbol {
         match self.tag {
+            Tag::Error => todo!(),
             Tag::Null => panic!("Can't cast Null to String"),
             Tag::Int => panic!("Can't cast Int to String"),
             Tag::Float => panic!("Can't cast Float to String"),
@@ -256,6 +268,7 @@ impl Debug for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?} ", self.tag)?;
         match self.tag {
+            Tag::Error => todo!(),
             Tag::Null => ().okay(),
             Tag::Int => write!(f, "{:?}", self.as_int()),
             Tag::Float => write!(f, "{:?}", self.as_float()),
@@ -272,6 +285,7 @@ impl Debug for Atom {
 impl Display for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.tag {
+            Tag::Error => todo!(),
             Tag::Null => write!(f, "Null"),
             Tag::Int => write!(f, "{}", self.as_int()),
             Tag::Float => write!(f, "{}", self.as_float()),
@@ -288,6 +302,7 @@ impl Display for Atom {
 #[repr(i64)]
 #[derive(Clone, Copy)]
 pub enum Tag {
+    Error = -1,
     Null = 0,
     Int = 1,
     Float = 2,
@@ -302,6 +317,7 @@ pub enum Tag {
 impl Debug for Tag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Tag::Error => todo!(),
             Self::Null => write!(f, "Null"),
             Self::Int => write!(f, "Int"),
             Self::Float => write!(f, "Float"),
