@@ -2,7 +2,8 @@ use core::slice;
 use std::{
     alloc::LayoutError,
     fmt::{Debug, Display},
-    ops::Deref,
+    marker::PhantomData,
+    ops::{Deref, Index},
     str::FromStr,
 };
 
@@ -20,10 +21,172 @@ pub enum CLStringError {
 }
 
 #[repr(C)]
-pub struct CLString {
+pub struct CLVector<T> {
     size: u32,
     capacity: u32,
     inner: *mut u8,
+    phantom_t: PhantomData<T>,
+}
+
+pub struct CLVecIntoIter<T> {
+    inner: CLVector<T>,
+    next: u32,
+}
+
+impl<T> Iterator for CLVecIntoIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let it = self.inner.get(self.next);
+        self.next += 1;
+        it
+    }
+}
+
+impl<T> IntoIterator for CLVector<T> {
+    type Item = T;
+    type IntoIter = CLVecIntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        CLVecIntoIter {
+            inner: self,
+            next: 0,
+        }
+    }
+}
+
+pub struct CLVecIter<'v, T> {
+    inner: &'v CLVector<T>,
+    next: u32,
+}
+
+impl<'v, T> Iterator for CLVecIter<'v, T> {
+    type Item = &'v T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let it = self.inner.get_ref(self.next);
+        self.next += 1;
+        it
+    }
+}
+
+impl<'v, T> IntoIterator for &'v CLVector<T> {
+    type Item = &'v T;
+    type IntoIter = CLVecIter<'v, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        CLVecIter {
+            inner: self,
+            next: 0,
+        }
+    }
+}
+
+impl<T> CLVector<T> {
+    pub fn new() -> Self {
+        Self {
+            size: 0,
+            capacity: 0,
+            inner: std::ptr::null_mut(),
+            phantom_t: Default::default(),
+        }
+    }
+
+    pub fn get(&self, idx: u32) -> Option<T> {
+        if idx >= self.size {
+            None
+        } else {
+            unsafe { ((self.inner as *const T).add(idx as usize).read()).some() }
+        }
+    }
+
+    pub fn get_ref(&self, idx: u32) -> Option<&T> {
+        if idx >= self.size {
+            None
+        } else {
+            unsafe { (&*(self.inner as *const T).add(idx as usize)).some() }
+        }
+    }
+
+    pub fn from_buffer(s: Vec<T>) -> Self {
+        let (size, capacity) = {
+            if s.capacity() > u32::MAX as usize {
+                panic!("CLString over capacity")
+            }
+            (s.len() as u32, s.capacity() as u32)
+        };
+        let inner = s.leak().as_mut_ptr() as _;
+        Self {
+            size,
+            capacity,
+            inner,
+            phantom_t: Default::default(),
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.size as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub fn capacity(&self) -> usize {
+        self.capacity as usize
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.inner, self.len()) }
+    }
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.inner, self.capacity()) }
+    }
+
+    /// # Safety
+    /// All parts must be valid
+    pub unsafe fn from_raw_parts(size: u32, capacity: u32, inner: *mut u8) -> Self {
+        Self {
+            size,
+            capacity,
+            inner,
+            phantom_t: Default::default(),
+        }
+    }
+}
+
+impl<T> Default for CLVector<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> Index<usize> for CLVector<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get_ref(index as u32).expect("Index out of range")
+    }
+}
+
+impl<T> Debug for CLVector<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CLString")
+            .field("size", &self.len())
+            .field("capacity", &self.capacity())
+            .field("str", &self.as_bytes())
+            .finish()
+    }
+}
+
+impl<T> Drop for CLVector<T> {
+    fn drop(&mut self) {
+        unsafe {
+            Vec::from_raw_parts(self.inner, self.len(), self.capacity());
+        }
+    }
+}
+
+#[repr(transparent)]
+pub struct CLString {
+    inner: CLVector<u8>,
 }
 
 impl Clone for CLString {
@@ -35,34 +198,26 @@ impl Clone for CLString {
 impl CLString {
     pub fn new() -> Self {
         Self {
-            size: 0,
-            capacity: 0,
-            inner: std::ptr::null_mut(),
+            inner: CLVector::new(),
         }
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        self.inner.as_bytes()
+    }
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        self.inner.as_bytes_mut()
     }
     pub fn from_string(s: String) -> Self {
         let s = s.into_bytes();
-        Self::from_buffer(s)
-    }
-    fn from_buffer(s: Vec<u8>) -> Self {
-        let (size, capacity) = {
-            if s.capacity() > u32::MAX as usize {
-                panic!("CLString over capacity")
-            }
-            (s.len() as u32, s.capacity() as u32)
-        };
-        let inner = s.leak().as_mut_ptr();
         Self {
-            size,
-            capacity,
-            inner,
+            inner: CLVector::from_buffer(s),
         }
     }
     pub fn len(&self) -> usize {
-        self.size as usize
+        self.inner.len()
     }
     pub fn capacity(&self) -> usize {
-        self.capacity as usize
+        self.inner.capacity()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -74,12 +229,7 @@ impl CLString {
     pub fn into_string(self) -> String {
         self.as_str().into()
     }
-    pub fn as_bytes(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.inner, self.len()) }
-    }
-    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.inner, self.capacity()) }
-    }
+
     pub fn replaced(&self, pat: &str, replacement: &str) -> Self {
         use kmp::kmp_find as find;
         if let Some(start) = find(pat.as_bytes(), self.as_bytes()) {
@@ -90,7 +240,9 @@ impl CLString {
             new_buff.extend_from_slice(&self.as_bytes()[..start]);
             new_buff.extend_from_slice(replacement.as_bytes());
             new_buff.extend_from_slice(&self.as_bytes()[end..]);
-            Self::from_buffer(new_buff)
+            Self {
+                inner: CLVector::from_buffer(new_buff),
+            }
         } else {
             self.clone()
         }
@@ -99,7 +251,7 @@ impl CLString {
         *self = self.replaced(pat, replacement);
     }
     pub fn as_ptr(&self) -> *mut u8 {
-        self.inner
+        self.inner.inner
     }
     pub fn format(&self, values: &[Atom]) -> Self {
         let mut replaced = self.clone();
@@ -121,18 +273,11 @@ impl CLString {
         replaced
     }
 }
+
 impl Deref for CLString {
     type Target = str;
     fn deref(&self) -> &Self::Target {
         self.as_str()
-    }
-}
-
-impl Drop for CLString {
-    fn drop(&mut self) {
-        unsafe {
-            Vec::from_raw_parts(self.inner, self.len(), self.capacity());
-        }
     }
 }
 
@@ -161,9 +306,7 @@ impl FromStr for CLString {
             (buf.as_mut_ptr(), capacity as u32)
         };
         Self {
-            size: size as u32,
-            capacity,
-            inner,
+            inner: unsafe { CLVector::from_raw_parts(size as u32, capacity, inner) },
         }
         .okay()
     }
@@ -177,8 +320,8 @@ impl Display for CLString {
 impl Debug for CLString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CLString")
-            .field("size", &self.size)
-            .field("capacity", &self.capacity)
+            .field("size", &self.len())
+            .field("capacity", &self.capacity())
             .field("str", &self.as_str())
             .finish()
     }

@@ -13,7 +13,7 @@ use std::str::FromStr;
 use crate::eval::value::{CLString, Symbol, Tag};
 use crate::function::Func;
 use crate::parser::{Args, DefunExpr, Expr};
-use crate::{libcl::*, lookup_value, set_value, Atom, CranelispError, EvalError, Result};
+use crate::{libcl::*, lookup_value, set_value, Atom, CranelispError, EvalError, Result, Span};
 
 pub struct Jit {
     builder_ctx: FunctionBuilderContext,
@@ -123,7 +123,7 @@ impl Jit {
             std::stringify!(cl_alloc_value),
             Atom::new_func(crate::function::Func::from_fn(
                 cl_alloc_value as *const u8,
-                0,
+                1,
                 true,
                 false,
             )),
@@ -133,7 +133,7 @@ impl Jit {
             std::stringify!(car),
             Atom::new_func(crate::function::Func::from_fn(
                 cl_alloc_value as *const u8,
-                0,
+                1,
                 true,
                 false,
             )),
@@ -342,12 +342,18 @@ struct FunctionTranslator<'a> {
 impl<'a> FunctionTranslator<'a> {
     fn translate_expr(&mut self, expr: Expr) -> Result<Value> {
         match expr {
-            Expr::Symbol(s, _) => {
+            Expr::Symbol(s, span) => {
                 if &s == "nil" {
                     alloc_heap_atom(self)
                 } else {
-                    let var = self.variables.get(&s).expect("Undefined variable");
-                    self.builder.use_var(*var).okay()
+                    self.variables
+                        .get(&s)
+                        .map(|var| self.builder.use_var(*var))
+                        .or_else(|| {
+                            let var = lookup_value(s.clone())? as i64;
+                            self.builder.ins().iconst(types::I64, var).some()
+                        })
+                        .ok_or_else(|| CranelispError::Eval(EvalError::Undefined(s.into(), span)))
                 }
             }
             Expr::Float(n, _) => self.builder.ins().f64const(n).okay(),
@@ -501,8 +507,20 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn translate_call(&mut self, name: SmolStr, exprs: Vec<Expr>) -> Result<Value> {
+        let signature = self
+            .variables
+            .get(&name)
+            .map(|var| self.builder.use_var(*var))
+            .or_else(|| {
+                let var = lookup_value(name.clone())? as i64;
+                self.builder.ins().iconst(types::I64, var).some()
+            })
+            .ok_or_else(|| {
+                CranelispError::Eval(EvalError::Undefined(name.clone().into(), Span::point(0)))
+            })?;
+
         let signature = unsafe {
-            *(*lookup_value(name.clone()).ok_or_else(|| {
+            *(*lookup_value(dbg! {name.clone()}).ok_or_else(|| {
                 eprintln!("Undefined in call translation");
                 CranelispError::Eval(EvalError::Undefined(
                     (&*name).to_owned(),
@@ -524,30 +542,57 @@ impl<'a> FunctionTranslator<'a> {
             sig.params.push(AbiParam::new(types::R64));
         }
 
-        // Yanked straight from JIT demo
-        let callee = self.module.declare_function(&name, Linkage::Import, &sig)?;
-        let local_callee = self.module.declare_func_in_func(callee, self.builder.func);
-        let mut arg_values = Vec::new();
-        if signature.stack_return {
-            for arg in exprs {
-                arg_values.push(self.translate_expr(arg)?)
+        if signature.body as u64 != 0 {
+            let sig = self.builder.func.import_signature(sig);
+            let mut arg_values = Vec::new();
+            let callee = self.builder.ins().iconst(types::I64, signature.body as i64);
+            let callee = self.builder.ins().raw_bitcast(types::R64, callee);
+            if signature.stack_return {
+                for arg in exprs {
+                    arg_values.push(self.translate_expr(arg)?)
+                }
+                let call = self.builder.ins().call_indirect(sig, callee, &arg_values);
+                self.builder.inst_results(call)[0]
+            } else {
+                // allocate return slot
+                let ret = self
+                    .builder
+                    .create_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 31));
+                let ret = self.builder.ins().stack_addr(types::R64, ret, 0);
+                arg_values.push(ret);
+                for arg in exprs {
+                    arg_values.push(self.translate_expr(arg)?)
+                }
+                self.builder.ins().call_indirect(sig, callee, &arg_values);
+                ret
             }
-            let call = self.builder.ins().call(local_callee, &arg_values);
-            self.builder.inst_results(call)[0]
+            .okay()
         } else {
-            // allocate return slot
-            let ret = self
-                .builder
-                .create_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 31));
-            let ret = self.builder.ins().stack_addr(types::R64, ret, 0);
-            arg_values.push(ret);
-            for arg in exprs {
-                arg_values.push(self.translate_expr(arg)?)
+            // Yanked straight from JIT demo
+            let callee = self.module.declare_function(&name, Linkage::Import, &sig)?;
+            let local_callee = self.module.declare_func_in_func(callee, self.builder.func);
+            let mut arg_values = Vec::new();
+            if signature.stack_return {
+                for arg in exprs {
+                    arg_values.push(self.translate_expr(arg)?)
+                }
+                let call = self.builder.ins().call(local_callee, &arg_values);
+                self.builder.inst_results(call)[0]
+            } else {
+                // allocate return slot
+                let ret = self
+                    .builder
+                    .create_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 31));
+                let ret = self.builder.ins().stack_addr(types::R64, ret, 0);
+                arg_values.push(ret);
+                for arg in exprs {
+                    arg_values.push(self.translate_expr(arg)?)
+                }
+                self.builder.ins().call(local_callee, &arg_values);
+                ret
             }
-            self.builder.ins().call(local_callee, &arg_values);
-            ret
+            .okay()
         }
-        .okay()
     }
 
     fn translate_let(&mut self, id: SmolStr, expr: Expr) -> Result<Value> {

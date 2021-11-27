@@ -7,6 +7,7 @@ use std::{
 };
 mod cl_string;
 pub use cl_string::CLString;
+pub use cl_string::CLVector;
 mod pair;
 pub use pair::*;
 

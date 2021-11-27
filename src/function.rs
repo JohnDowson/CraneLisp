@@ -14,7 +14,7 @@ pub struct Func {
     pub arity: u8,
     pub stack_return: bool,
     pub foldable: bool,
-    body: *const u8,
+    pub body: *const u8,
 }
 // extern "C" fn does not implement FnMut
 macro_rules! transmute {

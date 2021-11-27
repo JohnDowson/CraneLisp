@@ -140,7 +140,7 @@ impl ariadne::Span for Span {
 pub mod libcl {
     use somok::{Leaksome, Somok};
 
-    use crate::eval::value::{head, tail, Atom, Tag};
+    use crate::eval::value::{head, tail, Atom, CLVector, Tag};
 
     #[no_mangle]
     pub extern "C" fn car(l: &mut Atom) -> *mut Atom {
@@ -165,17 +165,20 @@ pub mod libcl {
     }
 
     pub extern "C" fn setf(_: &mut Atom, place: &mut Atom, new: &Atom) {
+        eprintln!("Hello from setf");
         *place = *new;
     }
 
     #[no_mangle]
-    pub extern "C" fn cl_print(ret: &mut Atom, a: &Atom) {
-        println!("{}", a);
-        *ret = Atom::NULL
+    pub extern "C" fn cl_print(atoms: &CLVector<Atom>) {
+        for a in atoms {
+            print!("{}", a);
+        }
+        println!();
     }
     #[no_mangle]
     pub extern "C" fn cl_eprint(ret: &mut Atom, a: &Atom) {
-        eprintln!("{:?}", a);
+        eprintln!("e {:?}", a);
         *ret = Atom::NULL
     }
 
