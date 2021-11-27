@@ -46,6 +46,19 @@ macro_rules! defsym {
                 $fun as *const u8,
                 2,
                 false,
+                true,
+            )),
+        ));
+    };
+    ($builder:expr; FOLDABLE $sym:expr => $fun:path) => {
+        $builder.symbol($sym, $fun as *const u8);
+        $builder.symbol($sym, $fun as *const u8);
+        crate::set_value(crate::eval::value::Symbol::new_with_atom(
+            $sym,
+            crate::Atom::new_func(crate::function::Func::from_fn(
+                $fun as *const u8,
+                2,
+                true,
                 false,
             )),
         ));
@@ -73,6 +86,19 @@ macro_rules! defsym {
                 $fun as *const u8,
                 2,
                 false,
+                true,
+            )),
+        ));
+    };
+    ($builder:expr; STACK $fun:path) => {
+        $builder.symbol(std::stringify!($fun), $fun as *const u8);
+        $builder.symbol(stringify!($fun), $fun as *const u8);
+        crate::set_value(crate::eval::value::Symbol::new_with_atom(
+            stringify!($fun),
+            crate::Atom::new_func(crate::function::Func::from_fn(
+                $fun as *const u8,
+                2,
+                true,
                 false,
             )),
         ));
@@ -86,8 +112,7 @@ impl Jit {
 
         defsym!(builder; 1; cl_print);
         defsym!(builder; 1; cl_eprint);
-        defsym!(builder; 1; cdr);
-        defsym!(builder; 1; car);
+        defsym!(builder; 2; "setf" => setf);
         defsym!(builder; FOLDABLE "+".to_string() => add);
         defsym!(builder; FOLDABLE "-".to_string() => sub);
         defsym!(builder; 2; "<".to_string() => less_than);
@@ -99,6 +124,26 @@ impl Jit {
             Atom::new_func(crate::function::Func::from_fn(
                 cl_alloc_value as *const u8,
                 0,
+                true,
+                false,
+            )),
+        ));
+        builder.symbol(std::stringify!(car), car as *const u8);
+        set_value(crate::eval::value::Symbol::new_with_atom(
+            std::stringify!(car),
+            Atom::new_func(crate::function::Func::from_fn(
+                cl_alloc_value as *const u8,
+                0,
+                true,
+                false,
+            )),
+        ));
+        builder.symbol(std::stringify!(cdr), cdr as *const u8);
+        set_value(crate::eval::value::Symbol::new_with_atom(
+            std::stringify!(cdr),
+            Atom::new_func(crate::function::Func::from_fn(
+                cl_alloc_value as *const u8,
+                1,
                 true,
                 false,
             )),
@@ -297,9 +342,13 @@ struct FunctionTranslator<'a> {
 impl<'a> FunctionTranslator<'a> {
     fn translate_expr(&mut self, expr: Expr) -> Result<Value> {
         match expr {
-            Expr::Symbol(n, _) => {
-                let var = self.variables.get(&n).expect("Undefined variable");
-                self.builder.use_var(*var).okay()
+            Expr::Symbol(s, _) => {
+                if &s == "nil" {
+                    alloc_heap_atom(self)
+                } else {
+                    let var = self.variables.get(&s).expect("Undefined variable");
+                    self.builder.use_var(*var).okay()
+                }
             }
             Expr::Float(n, _) => self.builder.ins().f64const(n).okay(),
             Expr::List(mut exprs, _) if matches!(exprs.first(), Some(Expr::Symbol(..))) => {
@@ -323,29 +372,11 @@ impl<'a> FunctionTranslator<'a> {
                     let a = alloc_heap_atom(self).unwrap();
                     store_new_atom(self, a, Tag::String, s).okay()
                 }
-                Expr::Float(_, _) => todo!(),
-                Expr::Integer(_, _) => todo!(),
+                expr @ (Expr::Integer(_, _) | Expr::Float(_, _)) => self.translate_expr(expr),
                 Expr::List(exprs, _) => {
                     let head = alloc_heap_atom(self)?;
-                    let mut memflags = MemFlags::new();
-                    memflags.set_aligned();
-                    let tag = self.builder.ins().iconst(types::I64, 4);
-                    let pair = alloc_heap_atom(self)?;
-                    self.builder.ins().store(memflags, tag, head, 0);
-                    self.builder.ins().store(memflags, pair, head, 8);
 
-                    let vals = exprs
-                        .into_iter()
-                        .map(|e| self.translate_expr(e))
-                        .collect::<Result<Vec<_>>>()?;
-
-                    let car = alloc_heap_atom(self)?;
-                    store_atom(self, vals[0], car);
-                    self.builder.ins().store(memflags, car, pair, 0);
-
-                    let mut previous = pair;
-                    for &val in &vals[1..] {
-                        let head = alloc_heap_atom(self)?;
+                    if !exprs.is_empty() {
                         let mut memflags = MemFlags::new();
                         memflags.set_aligned();
                         let tag = self.builder.ins().iconst(types::I64, 4);
@@ -353,17 +384,40 @@ impl<'a> FunctionTranslator<'a> {
                         self.builder.ins().store(memflags, tag, head, 0);
                         self.builder.ins().store(memflags, pair, head, 8);
 
-                        let car = alloc_heap_atom(self)?;
-                        store_atom(self, val, car);
-                        self.builder.ins().store(memflags, car, pair, 0);
+                        let mut previous = pair;
+                        if !exprs.is_empty() {
+                            let vals = exprs
+                                .into_iter()
+                                .map(|e| self.translate_expr(e))
+                                .collect::<Result<Vec<_>>>()?;
 
-                        self.builder.ins().store(memflags, head, previous, 8);
+                            let car = alloc_heap_atom(self)?;
+                            store_atom(self, vals[0], car);
+                            self.builder.ins().store(memflags, car, pair, 0);
 
-                        previous = pair;
+                            for &val in &vals[1..] {
+                                let head = alloc_heap_atom(self)?;
+                                let mut memflags = MemFlags::new();
+                                memflags.set_aligned();
+                                let tag = self.builder.ins().iconst(types::I64, 4);
+                                let pair = alloc_heap_atom(self)?;
+                                self.builder.ins().store(memflags, tag, head, 0);
+                                self.builder.ins().store(memflags, pair, head, 8);
+
+                                let car = alloc_heap_atom(self)?;
+                                store_atom(self, val, car);
+                                self.builder.ins().store(memflags, car, pair, 0);
+
+                                self.builder.ins().store(memflags, head, previous, 8);
+
+                                previous = pair;
+                            }
+
+                            // store nil into cdr of the last pair
+                            let nil = alloc_heap_atom(self)?;
+                            self.builder.ins().store(memflags, nil, previous, 8);
+                        }
                     }
-                    let nil = alloc_heap_atom(self)?;
-                    self.builder.ins().store(memflags, nil, previous, 8);
-
                     head.okay()
                 }
                 Expr::Quoted(_, _) => todo!(),
@@ -380,7 +434,7 @@ impl<'a> FunctionTranslator<'a> {
                 let cond_var = *self.variables.get("loop_cond").unwrap();
                 let truth = self.builder.ins().iconst(types::I64, 1);
                 self.builder.def_var(cond_var, truth);
-                self.builder.ins().f64const(0).okay()
+                alloc_heap_atom(self)
             }
             Expr::Loop(expr, _) => self.translate_loop(*expr),
             Expr::Let(name, expr, _) => self.translate_let(name, *expr),
@@ -443,7 +497,7 @@ impl<'a> FunctionTranslator<'a> {
 
         self.builder.seal_block(header_block);
         self.builder.seal_block(exit_block);
-        self.builder.ins().iconst(types::R64, 0).okay()
+        alloc_heap_atom(self)
     }
 
     fn translate_call(&mut self, name: SmolStr, exprs: Vec<Expr>) -> Result<Value> {
@@ -611,7 +665,7 @@ fn declare_variables_in_expr(
             declare_variables_in_expr(*expr, builder, variables, index)
         }
         Expr::Let(name, expr, _) => {
-            declare_variable(types::F64, builder, variables, index, name);
+            declare_variable(types::R64, builder, variables, index, name);
             declare_variables_in_expr(*expr, builder, variables, index)
         }
         Expr::Integer(_, _) => (),

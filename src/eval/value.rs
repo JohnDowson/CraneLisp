@@ -272,10 +272,10 @@ impl Display for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.tag {
             Tag::Null => write!(f, "Null"),
-            Tag::Int => write!(f, "{:?}", self.as_int()),
-            Tag::Float => write!(f, "{:?}", self.as_float()),
-            Tag::Ptr => write!(f, "{:?}", unsafe { &*self.as_ptr::<Atom>() }),
-            Tag::Pair => write!(f, "{:?}", unsafe { &*self.as_pair() }),
+            Tag::Int => write!(f, "{}", self.as_int()),
+            Tag::Float => write!(f, "{}", self.as_float()),
+            Tag::Ptr => write!(f, "{}", unsafe { &*self.as_ptr::<Atom>() }),
+            Tag::Pair => write!(f, "{}", unsafe { &*self.as_pair() }),
             Tag::Func => write!(f, "Function"),
             Tag::String => write!(f, "{}", self.as_string()),
             Tag::Return => write!(f, "{}", unsafe { &*self.as_ptr::<Atom>() }),

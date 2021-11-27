@@ -1,7 +1,7 @@
 use somok::{Leaksome, Somok};
 
 use super::Atom;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 pub fn list(mut vs: Vec<Atom>) -> Atom {
     let mut p = Atom::new_pair(
@@ -52,5 +52,10 @@ impl Pair {
 impl Debug for Pair {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         unsafe { write!(f, "( {:?} . {:?})", &*self.car, &*self.cdr) }
+    }
+}
+impl Display for Pair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        unsafe { write!(f, "( {} . {})", &*self.car, &*self.cdr) }
     }
 }

@@ -143,17 +143,29 @@ pub mod libcl {
     use crate::eval::value::{head, tail, Atom, Tag};
 
     #[no_mangle]
-    pub extern "C" fn car(ret: &mut Atom, l: &Atom) {
-        *ret = unsafe { *head(l) };
+    pub extern "C" fn car(l: &mut Atom) -> *mut Atom {
+        match l.tag {
+            Tag::Null => l as *mut _,
+            Tag::Pair => head(l),
+            _ => todo!(),
+        }
     }
 
     #[no_mangle]
-    pub extern "C" fn cdr(ret: &mut Atom, l: &Atom) {
-        *ret = unsafe { *tail(l) };
+    pub extern "C" fn cdr(l: &mut Atom) -> *mut Atom {
+        match l.tag {
+            Tag::Null => l as _,
+            Tag::Pair => tail(l),
+            _ => todo!(),
+        }
     }
 
     pub extern "C" fn cons(ret: &mut Atom, a: &Atom, b: &Atom) {
         *ret = Atom::new_pair(crate::eval::value::cons(*a, *b).boxed().leak());
+    }
+
+    pub extern "C" fn setf(_: &mut Atom, place: &mut Atom, new: &Atom) {
+        *place = *new;
     }
 
     #[no_mangle]

@@ -63,7 +63,7 @@ impl Spans for &EvalError {
     fn spans(self) -> Vec<(Span, String)> {
         match self {
             EvalError::Undefined(msg, span) => vec![(*span, msg.clone())],
-            EvalError::ArityMismatch => todo!(),
+            EvalError::ArityMismatch => panic!("arity mismatch"),
             EvalError::InvalidSignature(_) => todo!(),
         }
     }
