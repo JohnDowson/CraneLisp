@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 
 use clap::Parser;
+
 #[allow(dead_code, unused_imports)]
 pub use cranelisp::*;
 pub use errors::*;
@@ -61,6 +62,7 @@ pub fn provide_diagnostic(error: &CranelispError, program: impl Into<ariadne::So
             report.finish().eprint(program.into()).unwrap();
         }
         CranelispError::JIT(e) => todo!("{:#?}", e),
+        CranelispError::Optimizer(e) => todo!("{:#?}", e),
     }
 }
 

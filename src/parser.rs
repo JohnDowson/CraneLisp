@@ -1,23 +1,20 @@
-use std::str::FromStr;
-
-use crate::jit::Jit;
 use crate::lexer::{Lexer, Token};
-use crate::{CranelispError, Result, Span};
+use crate::{intern, CranelispError, Result, Span};
 use smol_str::SmolStr;
 use somok::Somok;
+use std::str::FromStr;
 mod expr;
 use crate::function::Type;
 pub use expr::{Args, DefunExpr, Expr};
 pub type Arglist = Vec<(String, Type)>;
 
-pub struct Parser<'l, 'e, 'j> {
+pub struct Parser<'l> {
     lexer: &'l mut Lexer,
-    jit: &'j mut Jit<'e>,
 }
 
-impl<'l, 'e, 'j> Parser<'l, 'e, 'j> {
-    pub fn new(lexer: &'l mut Lexer, jit: &'j mut Jit<'e>) -> Self {
-        Self { lexer, jit }
+impl<'l> Parser<'l> {
+    pub fn new(lexer: &'l mut Lexer) -> Self {
+        Self { lexer }
     }
 
     pub fn parse_expr(&mut self) -> Result<Expr> {
@@ -48,10 +45,10 @@ impl<'l, 'e, 'j> Parser<'l, 'e, 'j> {
                             let expr = self.parse_expr()?;
                             self.skip_whitespace()?;
                             let rparen = self.eat_rparen()?;
-                            let sym_id = self.jit.env.insert_symbol(name);
+                            intern(name.clone());
                             Expr::Defun(
                                 Box::new(DefunExpr {
-                                    name: sym_id,
+                                    name,
                                     args,
                                     body: expr,
                                 }),
@@ -87,9 +84,9 @@ impl<'l, 'e, 'j> Parser<'l, 'e, 'j> {
                             let expr = self.parse_expr()?;
                             self.skip_whitespace()?;
                             let rparen = self.eat_rparen()?;
-                            let sym_id = self.jit.env.insert_symbol(name);
+                            intern(name.clone());
                             Expr::Let(
-                                sym_id,
+                                name,
                                 Box::new(expr),
                                 Span::merge(token.span(), rparen.span()),
                             )
@@ -203,8 +200,8 @@ impl<'l, 'e, 'j> Parser<'l, 'e, 'j> {
             }
 
             Token::Symbol(sym, span) => {
-                let sym_id = self.jit.env.insert_symbol(sym);
-                let expr = Expr::Symbol(sym_id, span);
+                intern(sym.clone());
+                let expr = Expr::Symbol(sym, span);
                 expr.okay()
             }
 

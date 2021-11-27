@@ -11,14 +11,14 @@ pub enum Args {
 
 #[derive(Debug, Clone)]
 pub struct DefunExpr {
-    pub name: usize,
+    pub name: SmolStr,
     pub args: Args,
     pub body: Expr,
 }
 
 #[derive(Clone)]
 pub enum Expr {
-    Symbol(usize, Span),
+    Symbol(SmolStr, Span),
     Float(f64, Span),
     Integer(i64, Span),
     List(Vec<Expr>, Span),
@@ -27,7 +27,7 @@ pub enum Expr {
     If(Box<Expr>, Box<Expr>, Box<Expr>, Span),
     Return(Option<Box<Expr>>, Span),
     Loop(Box<Expr>, Span),
-    Let(usize, Box<Expr>, Span),
+    Let(SmolStr, Box<Expr>, Span),
     String(String, Span),
 }
 

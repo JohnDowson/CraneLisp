@@ -110,7 +110,7 @@ impl Func {
 
 impl Debug for Func {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(
+        write!(
             f,
             "{{ arity: {:?}, stack_return: {:?}, body: {:?} }}",
             self.arity, self.stack_return, self.body

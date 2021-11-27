@@ -1,6 +1,6 @@
 use std::{fs::File, io::Read, time::Instant};
 
-use cranelisp::{jit::Jit, Env};
+use cranelisp::jit::Jit;
 use rustyline::{
     validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
     Config, EditMode,
@@ -22,14 +22,8 @@ impl Validator for InputValidator {
     }
 }
 
-fn eval_env() -> Env {
-    Env::default()
-}
-
 pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
-    let mut env = eval_env();
-
-    let mut jit = Jit::new(&mut env, clir);
+    let mut jit = Jit::new(clir);
 
     let h = InputValidator {
         brackets: MatchingBracketValidator::new(),
@@ -59,7 +53,7 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
             lexer.rewind()
         }
 
-        let tree = match Parser::new(&mut lexer, &mut jit).parse_expr() {
+        let tree = match Parser::new(&mut lexer).parse_expr() {
             Ok(e) => e,
             Err(e) => {
                 provide_diagnostic(&e, src);
@@ -70,8 +64,8 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
             println!("{:#?}", tree);
         }
 
-        let evaluated = match { crate::eval::eval(tree, &mut jit) } {
-            Ok(v) => v,
+        match { crate::eval::eval(tree, &mut jit) } {
+            Ok(v) => println!(": {:?}", v),
             Err(e) => {
                 provide_diagnostic(&e, src);
                 continue;
@@ -80,9 +74,8 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
 
         let t2 = Instant::now();
         if time {
-            println!(": {:?}", t2 - t1);
+            println!("{:?}", t2 - t1);
         }
-        println!("{:?}", evaluated);
     }
     Ok(())
 }
@@ -94,9 +87,7 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> R
         buf
     };
 
-    let mut env = eval_env();
-
-    let mut jit = Jit::new(&mut env, clir);
+    let mut jit = Jit::new(clir);
 
     let t1 = Instant::now();
     let mut lexer = match Lexer::new(src.clone()) {
@@ -111,7 +102,7 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> R
         lexer.rewind()
     }
     while !lexer.finished() {
-        let tree = match Parser::new(&mut lexer, &mut jit).parse_expr() {
+        let tree = match Parser::new(&mut lexer).parse_expr() {
             Ok(e) => e,
             Err(cranelisp::CranelispError::EOF) => continue,
             Err(e) => {

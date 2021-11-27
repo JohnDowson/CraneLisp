@@ -1,39 +1,69 @@
 use crate::function::Func;
+use smol_str::SmolStr;
 use somok::{Leaksome, Somok};
 use std::{
-    ffi::{CStr, CString},
     fmt::{Debug, Display},
+    ops::Deref,
 };
+mod cl_string;
+pub use cl_string::CLString;
+mod pair;
+pub use pair::*;
 
-pub fn cons(v1: Atom, v2: Atom) -> Atom {
-    let v1 = v1.boxed().leak();
-    let v2 = v2.boxed().leak();
-    let pair = Pair::new(v1, v2);
-
-    Atom::new_pair(pair.boxed().leak())
-}
-pub fn head(v: &Atom) -> *mut Atom {
-    unsafe { *v.as_pair() }.car
-}
-pub fn tail(v: &Atom) -> *mut Atom {
-    unsafe { *v.as_pair() }.cdr
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct Pair {
-    pub car: *mut Atom,
-    pub cdr: *mut Atom,
+#[derive(Clone)]
+pub struct Symbol {
+    pub name: SmolStr,
+    pub val: *mut Atom,
 }
 
-impl Pair {
-    pub fn new(car: *mut Atom, cdr: *mut Atom) -> Self {
-        Self { car, cdr }
+impl Debug for Symbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Symbol")
+            .field("name", &self.name)
+            .field("val", unsafe { &*self.val })
+            .finish()
     }
 }
 
-impl Debug for Pair {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        unsafe { write!(f, "( {:?} . {:?})", &*self.car, &*self.cdr) }
+impl Eq for Symbol {}
+
+impl PartialEq for Symbol {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl PartialOrd for Symbol {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.name.partial_cmp(&other.name)
+    }
+}
+
+impl Ord for Symbol {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name.cmp(&other.name)
+    }
+}
+
+impl Symbol {
+    pub fn new(name: impl Into<SmolStr>) -> Self {
+        Self {
+            name: name.into(),
+            val: Atom::NULL.boxed().leak(),
+        }
+    }
+    pub fn new_with_atom(name: impl Into<SmolStr>, atom: Atom) -> Self {
+        Self {
+            name: name.into(),
+            val: atom.boxed().leak(),
+        }
+    }
+}
+impl Deref for Symbol {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.name
     }
 }
 
@@ -49,13 +79,10 @@ impl Atom {
         value: 0,
     };
     pub const TRUE: Self = Self {
-        tag: Tag::Null,
-        value: 0,
+        tag: Tag::Int,
+        value: 1,
     };
-    pub const FALSE: Self = Self {
-        tag: Tag::Null,
-        value: 0,
-    };
+    pub const FALSE: Self = Self::NULL;
 
     pub fn new_int(value: i64) -> Self {
         Self {
@@ -69,16 +96,16 @@ impl Atom {
             value: value.to_bits(),
         }
     }
-    pub fn new_pair(value: *mut Pair) -> Self {
+    pub fn new_pair(value: &mut Pair) -> Self {
         Self {
             tag: Tag::Pair,
-            value: value as u64,
+            value: value as *mut _ as u64,
         }
     }
-    pub fn new_ptr<T>(value: *mut T) -> Self {
+    pub fn new_ptr<T>(value: &mut T) -> Self {
         Self {
             tag: Tag::Ptr,
-            value: value as u64,
+            value: value as *mut _ as u64,
         }
     }
     pub fn new_func(value: Func) -> Self {
@@ -88,16 +115,22 @@ impl Atom {
         }
     }
     pub fn new_bool(value: bool) -> Self {
-        Self {
-            tag: Tag::Bool,
-            value: value as u64,
+        if value {
+            Self::TRUE
+        } else {
+            Self::NULL
         }
     }
-    pub fn new_string(value: impl Into<Vec<u8>>) -> Self {
-        let cstring = CString::new(value).unwrap().into_raw();
+    pub fn new_string(value: CLString) -> Self {
         Self {
             tag: Tag::String,
-            value: cstring as u64,
+            value: value.as_ptr() as u64,
+        }
+    }
+    pub fn new_symbol(value: &Symbol) -> Self {
+        Self {
+            tag: Tag::Symbol,
+            value: value as *const _ as u64,
         }
     }
     pub fn new_return(value: Atom) -> Self {
@@ -116,9 +149,9 @@ impl Atom {
             Tag::Ptr => self.value as _,
             Tag::Pair => panic!("Can't cast Pair to Int"),
             Tag::Func => panic!("Can't cast Func to Int"),
-            Tag::Bool => self.value as _,
             Tag::String => todo!(),
             Tag::Return => todo!(),
+            Tag::Symbol => todo!(),
         }
     }
 
@@ -130,9 +163,9 @@ impl Atom {
             Tag::Ptr => panic!("Can't cast Ptr to Float"),
             Tag::Pair => panic!("Can't cast Pair to Float"),
             Tag::Func => panic!("Can't cast Func to Float"),
-            Tag::Bool => panic!("Can't cast Bool to Float"),
             Tag::String => todo!(),
             Tag::Return => todo!(),
+            Tag::Symbol => todo!(),
         }
     }
 
@@ -144,9 +177,9 @@ impl Atom {
             Tag::Ptr => self.value as *mut T,
             Tag::Pair => panic!("Can't cast Pair to Ptr"),
             Tag::Func => panic!("Can't cast Func to Ptr"),
-            Tag::Bool => panic!("Can't cast Bool to Ptr"),
             Tag::String => todo!(),
             Tag::Return => self.value as *mut T,
+            Tag::Symbol => todo!(),
         }
     }
 
@@ -158,9 +191,9 @@ impl Atom {
             Tag::Ptr => panic!("Can't cast Ptr to Pair"),
             Tag::Pair => self.value as *mut _,
             Tag::Func => panic!("Can't cast Func to Pair"),
-            Tag::Bool => panic!("Can't cast Bool to Pair"),
             Tag::String => todo!(),
             Tag::Return => todo!(),
+            Tag::Symbol => todo!(),
         }
     }
 
@@ -172,25 +205,25 @@ impl Atom {
             Tag::Ptr => panic!("Can't cast Ptr to Func"),
             Tag::Pair => panic!("Can't cast Pair to Func"),
             Tag::Func => unsafe { std::mem::transmute(self.value) },
-            Tag::Bool => panic!("Can't cast Bool to Func"),
             Tag::String => todo!(),
             Tag::Return => todo!(),
+            Tag::Symbol => todo!(),
         }
     }
     pub fn as_bool(&self) -> bool {
         match self.tag {
             Tag::Null => false,
-            Tag::Int => self.value != 0,
-            Tag::Float => (self.value as f64) >= 0.0,
-            Tag::Ptr => panic!("Can't cast Ptr to Bool"),
-            Tag::Pair => panic!("Can't cast Pair to Bool"),
-            Tag::Func => panic!("Can't cast Func to Bool"),
-            Tag::Bool => self.value != 0,
-            Tag::String => todo!(),
-            Tag::Return => todo!(),
+            Tag::Int => true,
+            Tag::Float => true,
+            Tag::Ptr => true,
+            Tag::Pair => true,
+            Tag::Func => true,
+            Tag::String => true,
+            Tag::Return => true,
+            Tag::Symbol => self.as_string() == "t",
         }
     }
-    pub fn as_string(&self) -> &CStr {
+    pub fn as_string(&self) -> &str {
         match self.tag {
             Tag::Null => panic!("Can't cast Null to String"),
             Tag::Int => panic!("Can't cast Int to String"),
@@ -198,9 +231,22 @@ impl Atom {
             Tag::Ptr => panic!("Can't cast Ptr to String"),
             Tag::Pair => panic!("Can't cast Pair to String"),
             Tag::Func => panic!("Can't cast Func to String"),
-            Tag::Bool => panic!("Can't cast Bool to String"),
-            Tag::String => unsafe { CStr::from_ptr(self.value as *mut i8) },
+            Tag::String => unsafe { &*(self.value as *mut CLString) },
+            Tag::Return => panic!("Can't cast Return to String"),
+            Tag::Symbol => self.as_symbol(),
+        }
+    }
+    pub fn as_symbol(&self) -> &Symbol {
+        match self.tag {
+            Tag::Null => panic!("Can't cast Null to String"),
+            Tag::Int => panic!("Can't cast Int to String"),
+            Tag::Float => panic!("Can't cast Float to String"),
+            Tag::Ptr => panic!("Can't cast Ptr to String"),
+            Tag::Pair => panic!("Can't cast Pair to String"),
+            Tag::Func => panic!("Can't cast Func to String"),
+            Tag::String => todo!(),
             Tag::Return => todo!(),
+            Tag::Symbol => unsafe { &*(self.value as *mut Symbol) },
         }
     }
 }
@@ -215,9 +261,9 @@ impl Debug for Atom {
             Tag::Ptr => write!(f, "{:?}", unsafe { *self.as_ptr::<Atom>() }),
             Tag::Pair => write!(f, "{:?}", unsafe { &*self.as_pair() }),
             Tag::Func => write!(f, "{:?}", unsafe { *self.as_func() }),
-            Tag::Bool => write!(f, "{:?}", self.as_bool()),
             Tag::String => write!(f, "{:?}", self.as_string()),
             Tag::Return => write!(f, "{:?}", unsafe { *self.as_ptr::<Atom>() }),
+            Tag::Symbol => write!(f, "{:?}", self.as_symbol()),
         }
     }
 }
@@ -231,9 +277,9 @@ impl Display for Atom {
             Tag::Ptr => write!(f, "{:?}", unsafe { &*self.as_ptr::<Atom>() }),
             Tag::Pair => write!(f, "{:?}", unsafe { &*self.as_pair() }),
             Tag::Func => write!(f, "Function"),
-            Tag::Bool => write!(f, "{:?}", self.as_bool()),
-            Tag::String => write!(f, "{:?}", self.as_string()),
-            Tag::Return => write!(f, "{:?}", unsafe { &*self.as_ptr::<Atom>() }),
+            Tag::String => write!(f, "{}", self.as_string()),
+            Tag::Return => write!(f, "{}", unsafe { &*self.as_ptr::<Atom>() }),
+            Tag::Symbol => write!(f, "{}", self.as_string()),
         }
     }
 }
@@ -247,7 +293,7 @@ pub enum Tag {
     Ptr = 3,
     Pair = 4,
     Func = 5,
-    Bool = 6,
+    Symbol = 6,
     String = 7,
     Return = 8,
 }
@@ -261,9 +307,9 @@ impl Debug for Tag {
             Self::Ptr => write!(f, "Ptr"),
             Self::Pair => write!(f, "Pair"),
             Self::Func => write!(f, "Func"),
-            Self::Bool => write!(f, "Bool"),
             Self::String => write!(f, "String"),
             Self::Return => write!(f, "Return"),
+            Tag::Symbol => write!(f, "Symbol"),
         }
     }
 }

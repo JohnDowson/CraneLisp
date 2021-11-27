@@ -29,80 +29,42 @@ pub mod lexer;
 pub mod list;
 pub mod parser;
 
-use std::ops::Deref;
+use std::{cell::RefCell, collections::BTreeSet};
 
 pub use errors::*;
-use eval::Atom;
-use fnv::FnvHashMap;
+use eval::{value::Symbol, Atom};
+use once_cell::unsync::Lazy;
 use smol_str::SmolStr;
 use somok::{Leaksome, Somok};
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
 
-#[derive(Clone, Debug)]
-pub struct Symbol {
-    name: SmolStr,
-}
-impl Deref for Symbol {
-    type Target = str;
+static mut ENV: Lazy<RefCell<BTreeSet<Symbol>>> =
+    Lazy::new(|| RefCell::new(std::collections::BTreeSet::default()));
 
-    fn deref(&self) -> &Self::Target {
-        &*self.name
+pub fn intern(sym: SmolStr) -> SmolStr {
+    unsafe {
+        ENV.get_mut().insert(Symbol {
+            name: sym.clone(),
+            val: Atom::NULL.boxed().leak(),
+        });
+        sym
     }
-}
-
-#[derive(Default, Debug)]
-pub struct Env {
-    pub env: FnvHashMap<usize, Atom>,
-    symbol_ids: FnvHashMap<SmolStr, usize>,
-    symbols: Vec<Symbol>,
-    last_symbol_id: Option<usize>,
 }
 
-impl Env {
-    pub fn insert_symbol_str(&mut self, sym: &'static str) -> usize {
-        let symbol_exists = self.symbol_ids.keys().any(|s| sym == *s);
-        if symbol_exists {
-            *self.symbol_ids.get(sym).unwrap()
-        } else {
-            self.symbols.push(Symbol { name: sym.into() });
-            let id = if let Some(mut id) = self.last_symbol_id {
-                id += 1;
-                self.last_symbol_id = Some(id);
-                id
-            } else {
-                self.last_symbol_id = 0.some();
-                0
-            };
-            self.symbol_ids.insert(sym.into(), id);
-            id
-        }
+pub fn set_value(sym: Symbol) {
+    unsafe {
+        ENV.get_mut().replace(sym);
     }
-    pub fn insert_symbol(&mut self, sym: SmolStr) -> usize {
-        let symbol_exists = self.symbol_ids.keys().any(|s| sym == *s);
-        if symbol_exists {
-            *self.symbol_ids.get(&*sym).unwrap()
-        } else {
-            self.symbols.push(Symbol { name: sym.clone() });
-            let id = if let Some(mut id) = self.last_symbol_id {
-                id += 1;
-                self.last_symbol_id = Some(id);
-                id
-            } else {
-                self.last_symbol_id = 0.some();
-                0
-            };
-            self.symbol_ids.insert(sym, id);
-            id
-        }
-    }
-    pub fn lookup_symbol(&self, sym_id: usize) -> Option<Symbol> {
-        self.symbols.get(sym_id).cloned()
-    }
-    pub fn insert_value(&mut self, id: usize, value: Atom) {
-        self.env.insert(id, value);
-    }
-    pub fn lookup_value(&self, sym_id: usize) -> Option<Atom> {
-        self.env.get(&sym_id).copied()
+}
+
+pub fn lookup_value(sym: SmolStr) -> Option<*mut Atom> {
+    unsafe {
+        ENV.get_mut()
+            .get(&Symbol {
+                name: sym,
+                val: Atom::NULL.boxed().leak(),
+            })
+            .map(|s| s.val)
     }
 }
 trait TryRemove {
@@ -178,7 +140,21 @@ impl ariadne::Span for Span {
 pub mod libcl {
     use somok::{Leaksome, Somok};
 
-    use crate::eval::value::{Atom, Tag};
+    use crate::eval::value::{head, tail, Atom, Tag};
+
+    #[no_mangle]
+    pub extern "C" fn car(ret: &mut Atom, l: &Atom) {
+        *ret = unsafe { *head(l) };
+    }
+
+    #[no_mangle]
+    pub extern "C" fn cdr(ret: &mut Atom, l: &Atom) {
+        *ret = unsafe { *tail(l) };
+    }
+
+    pub extern "C" fn cons(ret: &mut Atom, a: &Atom, b: &Atom) {
+        *ret = Atom::new_pair(crate::eval::value::cons(*a, *b).boxed().leak());
+    }
 
     #[no_mangle]
     pub extern "C" fn cl_print(ret: &mut Atom, a: &Atom) {
@@ -214,7 +190,7 @@ pub mod libcl {
             (Tag::Int, Tag::Float) => *ret = Atom::new_int(a.as_int() - b.as_float() as i64),
             (Tag::Float, Tag::Int) => *ret = Atom::new_float(a.as_float() - b.as_int() as f64),
             (Tag::Float, Tag::Float) => *ret = Atom::new_float(a.as_float() - b.as_float()),
-            _ => eprintln!("Can't subtract non-numbers"),
+            _ => eprintln!("Can't subtract non-numbers {:?} + {:?}", a, b),
         }
     }
 
