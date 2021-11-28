@@ -268,7 +268,7 @@ impl Debug for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?} ", self.tag)?;
         match self.tag {
-            Tag::Error => todo!(),
+            Tag::Error => write!(f, "{:?}", self.value),
             Tag::Null => ().okay(),
             Tag::Int => write!(f, "{:?}", self.as_int()),
             Tag::Float => write!(f, "{:?}", self.as_float()),
@@ -285,7 +285,7 @@ impl Debug for Atom {
 impl Display for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.tag {
-            Tag::Error => todo!(),
+            Tag::Error => write!(f, "Error {}", self.value),
             Tag::Null => write!(f, "Null"),
             Tag::Int => write!(f, "{}", self.as_int()),
             Tag::Float => write!(f, "{}", self.as_float()),
@@ -317,7 +317,7 @@ pub enum Tag {
 impl Debug for Tag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Tag::Error => todo!(),
+            Tag::Error => write!(f, "Error"),
             Self::Null => write!(f, "Null"),
             Self::Int => write!(f, "Int"),
             Self::Float => write!(f, "Float"),

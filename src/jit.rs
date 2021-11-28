@@ -1,4 +1,4 @@
-use cranelift::codegen::ir::{types, HeapData, HeapStyle, StackSlot}; //, Function};
+use cranelift::codegen::ir::{types, StackSlot}; //, Function};
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, ModuleError};
@@ -6,7 +6,6 @@ use smol_str::SmolStr;
 //DataContext
 use somok::{Leaksome, Somok};
 use std::collections::HashMap;
-use std::ffi::CString;
 use std::str::FromStr;
 //use std::slice;
 
@@ -126,11 +125,19 @@ impl Jit {
     }
 
     fn translate(&mut self, fun: DefunExpr) -> Result<()> {
+        // Arg count
         self.ctx
             .func
             .signature
             .params
-            .push(AbiParam::new(types::R64));
+            .push(AbiParam::new(types::I64));
+        // Arg pointer
+        // Must be I64 because I need to iadd to it later
+        self.ctx
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(types::I64));
 
         self.ctx
             .func
@@ -236,7 +243,20 @@ impl<'a> FunctionTranslator<'a> {
                         .map(|var| self.builder.use_var(*var))
                         .or_else(|| {
                             let var = lookup_value(s.clone())? as i64;
-                            self.builder.ins().iconst(types::I64, var).some()
+                            let var_addr = self.builder.ins().iconst(types::I64, var);
+                            // dirty hack to get around bugged bitcast_raw
+                            let mut memflags = MemFlags::new();
+                            memflags.set_aligned();
+                            let ss = self.builder.create_stack_slot(StackSlotData {
+                                kind: StackSlotKind::ExplicitSlot,
+                                size: 8,
+                            });
+                            let addr = self.builder.ins().stack_addr(types::R64, ss, 0);
+                            self.builder.ins().store(memflags, var_addr, addr, 0);
+                            self.builder
+                                .ins()
+                                .load(types::R64, memflags, addr, 0)
+                                .some()
                         })
                         .ok_or_else(|| CranelispError::Eval(EvalError::Undefined(s.into(), span)))
                 }
@@ -347,7 +367,7 @@ impl<'a> FunctionTranslator<'a> {
             Expr::String(s, _) => {
                 let atom = alloc_stack_atom(self);
                 let ptr = {
-                    let ptr = CString::new(s).unwrap().into_raw() as i64;
+                    let ptr = CLString::from_string(s).boxed().leak() as *mut _ as i64;
                     self.builder.ins().iconst(types::I64, ptr)
                 };
                 let string_tag = self.builder.ins().iconst(types::I64, 7);
@@ -419,11 +439,22 @@ impl<'a> FunctionTranslator<'a> {
         sig.params.push(AbiParam::new(types::I64));
         sig.params.push(AbiParam::new(types::R64));
 
+        let mut memflags = MemFlags::new();
+        memflags.set_aligned();
+
         #[allow(clippy::fn_to_numeric_cast)]
         if func.body as u64 != 0 {
             let sig = self.builder.func.import_signature(sig);
+            // dirty hack to get around bugged bitcast_raw
             let callee = self.builder.ins().iconst(types::I64, func.body as i64);
-            let callee = self.builder.ins().raw_bitcast(types::R64, callee);
+            let ss = self.builder.create_stack_slot(StackSlotData {
+                kind: StackSlotKind::ExplicitSlot,
+                size: 8,
+            });
+            let addr = self.builder.ins().stack_addr(types::R64, ss, 0);
+            self.builder.ins().store(memflags, callee, addr, 0);
+            let callee = self.builder.ins().load(types::R64, memflags, addr, 0);
+            //let callee = self.builder.ins().bitcast(types::R64, callee);
 
             let mut arg_values = Vec::new();
 
@@ -441,12 +472,10 @@ impl<'a> FunctionTranslator<'a> {
             let call = self.builder.ins().call(local_malloc, &[count_bytes]);
             let heap_addr = self.builder.inst_results(call)[0];
 
-            let mut memflags = MemFlags::new();
-            memflags.set_aligned();
             for (i, arg) in args.into_iter().enumerate() {
                 self.builder
                     .ins()
-                    .store(memflags, arg, heap_addr, (i * 16) as i32);
+                    .store(memflags, arg, heap_addr, (i * 8) as i32);
             }
 
             arg_values.push(count);
@@ -474,12 +503,10 @@ impl<'a> FunctionTranslator<'a> {
             let call = self.builder.ins().call(local_malloc, &[count_bytes]);
             let heap_addr = self.builder.inst_results(call)[0];
 
-            let mut memflags = MemFlags::new();
-            memflags.set_aligned();
             for (i, arg) in args.into_iter().enumerate() {
                 self.builder
                     .ins()
-                    .store(memflags, arg, heap_addr, (i * 16) as i32);
+                    .store(memflags, arg, heap_addr, (i * 8) as i32);
             }
 
             arg_values.push(count);
@@ -542,8 +569,30 @@ fn declare_variables(
             unreachable!()
         }
         Args::Arglist(args) => {
+            let val = builder.block_params(block)[0];
+            let var = declare_variable(
+                types::I64,
+                builder,
+                &mut variables,
+                &mut index,
+                "__count".into(),
+            );
+            builder.def_var(var, val);
             for (i, name) in args.iter().enumerate() {
-                let val = builder.block_params(block)[i];
+                let val = {
+                    let base = builder.block_params(block)[1];
+                    let var_addr = builder.ins().iadd_imm(base, i as i64 * 8);
+                    // dirty hack to get around bugged bitcast_raw
+                    let mut memflags = MemFlags::new();
+                    memflags.set_aligned();
+                    let ss = builder.create_stack_slot(StackSlotData {
+                        kind: StackSlotKind::ExplicitSlot,
+                        size: 8,
+                    });
+                    let addr = builder.ins().stack_addr(types::R64, ss, 0);
+                    builder.ins().store(memflags, var_addr, addr, 0);
+                    builder.ins().load(types::R64, memflags, addr, 0)
+                };
                 let var = declare_variable(
                     types::R64,
                     builder,

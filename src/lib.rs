@@ -144,82 +144,83 @@ pub mod libcl {
     use crate::eval::value::{head, tail, Atom, Tag};
 
     #[no_mangle]
-    pub unsafe extern "C" fn car(count: usize, atoms: *mut Atom) -> *mut Atom {
+    pub unsafe extern "C" fn car(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 1 {
             return Atom::NULL.boxed().leak();
         }
-        match (*atoms).tag {
-            Tag::Null => atoms,
-            Tag::Pair => head(&*atoms),
+        match (**atoms).tag {
+            Tag::Null => *atoms,
+            Tag::Pair => head(&**atoms),
             _ => todo!(),
         }
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn cdr(count: usize, atoms: *mut Atom) -> *mut Atom {
+    pub unsafe extern "C" fn cdr(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 1 {
             return Atom::NULL.boxed().leak();
         }
-        match (*atoms).tag {
-            Tag::Null => atoms,
-            Tag::Pair => tail(&*atoms),
+        match (**atoms).tag {
+            Tag::Null => *atoms,
+            Tag::Pair => tail(&**atoms),
             _ => todo!(),
         }
     }
 
-    pub unsafe extern "C" fn cons(count: usize, atoms: *mut Atom) -> *mut Atom {
+    pub unsafe extern "C" fn cons(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 2 {
             return Atom::NULL.boxed().leak();
         }
-        let (a, b) = (atoms, atoms.add(1));
+        let (a, b) = (*atoms, *atoms.add(1));
 
         Atom::new_pair(crate::eval::value::cons(a, b).boxed().leak())
             .boxed()
             .leak()
     }
 
-    pub unsafe extern "C" fn setf(count: usize, atoms: *mut Atom) -> *mut Atom {
+    pub unsafe extern "C" fn setf(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 2 {
             return Atom::NULL.boxed().leak();
         }
-        let (place, new) = (atoms, atoms.add(1));
+        let (place, new) = (*atoms, *atoms.add(1));
         *place = *new;
 
         Atom::NULL.boxed().leak()
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn cl_print(count: usize, atoms: *mut Atom) -> *mut Atom {
+    pub unsafe extern "C" fn cl_print(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         for i in 0..count {
-            print!("{}", &*atoms.add(i));
+            let atom = &**atoms.add(i);
+            print!("{}", atom);
         }
         println!();
         Atom::NULL.boxed().leak()
     }
     #[no_mangle]
-    pub unsafe extern "C" fn cl_eprint(count: usize, atoms: *mut Atom) -> *mut Atom {
+    pub unsafe extern "C" fn cl_eprint(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         for i in 0..count {
-            print!("{}", &*atoms.add(i));
+            print!("{}", &**atoms.add(i));
         }
         println!();
         Atom::NULL.boxed().leak()
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn cl_alloc_value(_: usize, _: *mut Atom) -> *mut Atom {
+    pub unsafe extern "C" fn cl_alloc_value(_: usize, _: *mut *mut Atom) -> *mut Atom {
         Atom::NULL.boxed().leak()
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn add(count: usize, atoms: *mut Atom) -> *mut Atom {
-        if count != 2 {
+    pub unsafe extern "C" fn add(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
+        if count < 2 {
             return Atom::ERROR.boxed().leak();
         }
 
-        let mut a = *atoms;
+        let mut a = **atoms;
 
         for i in 1..count {
-            let b = &*atoms.add(i);
+            let b = **(atoms.add(i));
             a = match (a.tag, b.tag) {
                 (Tag::Int, Tag::Int) => Atom::new_int(a.as_int() + b.as_int()),
                 (Tag::Int, Tag::Float) => Atom::new_int(a.as_int() + b.as_float() as i64),
@@ -232,15 +233,15 @@ pub mod libcl {
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn sub(count: usize, atoms: *mut Atom) -> *mut Atom {
-        if count != 2 {
+    pub unsafe extern "C" fn sub(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
+        if count < 2 {
             return Atom::ERROR.boxed().leak();
         }
 
-        let mut a = *atoms;
+        let mut a = **atoms;
 
         for i in 1..count {
-            let b = &*atoms.add(i);
+            let b = **atoms.add(i);
             a = match (a.tag, b.tag) {
                 (Tag::Int, Tag::Int) => Atom::new_int(a.as_int() - b.as_int()),
                 (Tag::Int, Tag::Float) => Atom::new_int(a.as_int() - b.as_float() as i64),
@@ -253,20 +254,20 @@ pub mod libcl {
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn less_than(count: usize, atoms: *mut Atom) -> *mut Atom {
-        if count != 2 {
+    pub unsafe extern "C" fn less_than(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
+        if count < 2 {
             return Atom::ERROR.boxed().leak();
         }
 
-        let mut a = *atoms;
+        let mut a = **atoms;
 
         for i in 1..count {
-            let b = &*atoms.add(i);
+            let b = **atoms.add(i);
             a = match (a.tag, b.tag) {
-                (Tag::Int, Tag::Int) => Atom::new_int(a.as_int() - b.as_int()),
-                (Tag::Int, Tag::Float) => Atom::new_int(a.as_int() - b.as_float() as i64),
-                (Tag::Float, Tag::Int) => Atom::new_float(a.as_float() - b.as_int() as f64),
-                (Tag::Float, Tag::Float) => Atom::new_float(a.as_float() - b.as_float()),
+                (Tag::Int, Tag::Int) => Atom::new_bool(a.as_int() < b.as_int()),
+                (Tag::Int, Tag::Float) => Atom::new_bool(a.as_int() < b.as_float() as i64),
+                (Tag::Float, Tag::Int) => Atom::new_bool(a.as_float() < b.as_int() as f64),
+                (Tag::Float, Tag::Float) => Atom::new_bool(a.as_float() < b.as_float()),
                 _ => panic!("Can't compare non-numbers {:?} + {:?}", a, b),
             };
         }
@@ -274,19 +275,19 @@ pub mod libcl {
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn more_than(count: usize, atoms: *mut Atom) -> *mut Atom {
-        if count != 2 {
+    pub unsafe extern "C" fn more_than(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
+        if count < 2 {
             return Atom::ERROR.boxed().leak();
         }
-        let mut a = *atoms;
+        let mut a = **atoms;
 
         for i in 1..count {
-            let b = &*atoms.add(i);
+            let b = **atoms.add(i);
             a = match (a.tag, b.tag) {
-                (Tag::Int, Tag::Int) => Atom::new_int(a.as_int() - b.as_int()),
-                (Tag::Int, Tag::Float) => Atom::new_int(a.as_int() - b.as_float() as i64),
-                (Tag::Float, Tag::Int) => Atom::new_float(a.as_float() - b.as_int() as f64),
-                (Tag::Float, Tag::Float) => Atom::new_float(a.as_float() - b.as_float()),
+                (Tag::Int, Tag::Int) => Atom::new_bool(a.as_int() > b.as_int()),
+                (Tag::Int, Tag::Float) => Atom::new_bool(a.as_int() > b.as_float() as i64),
+                (Tag::Float, Tag::Int) => Atom::new_bool(a.as_float() > b.as_int() as f64),
+                (Tag::Float, Tag::Float) => Atom::new_bool(a.as_float() > b.as_float()),
                 _ => panic!("Can't compare non-numbers {:?} + {:?}", a, b),
             };
         }

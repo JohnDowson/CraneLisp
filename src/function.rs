@@ -10,11 +10,11 @@ use std::{fmt::Debug, str::FromStr};
 
 #[derive(Clone, Copy)]
 pub struct Func {
-    pub body: unsafe extern "C" fn(usize, *mut Atom) -> *mut Atom,
+    pub body: unsafe extern "C" fn(usize, *mut *mut Atom) -> *mut Atom,
 }
 
 impl Func {
-    pub fn from_fn(body: unsafe extern "C" fn(usize, *mut Atom) -> *mut Atom) -> Self {
+    pub fn from_fn(body: unsafe extern "C" fn(usize, *mut *mut Atom) -> *mut Atom) -> Self {
         Self { body }
     }
     pub fn jit(jit: &mut Jit, defun: DefunExpr) -> Result<Self> {
@@ -23,7 +23,7 @@ impl Func {
     }
 
     pub fn call(&self, args: Vec<Atom>) -> Atom {
-        let (count, args) = (args.len(), args.leak().as_mut_ptr());
+        let (count, args) = (args.len(), &mut args.leak().as_mut_ptr());
         unsafe { *(self.body)(count, args) }
     }
 }
