@@ -595,9 +595,9 @@ fn declare_variables(
                 memflags.set_aligned();
                 let ss = builder.create_stack_slot(StackSlotData {
                     kind: StackSlotKind::ExplicitSlot,
-                    size: 8,
+                    size: 16 * (args.len() / 2) as u32,
                 });
-                let addr = builder.ins().stack_addr(types::R64, ss, 0);
+                let addr = builder.ins().stack_addr(types::R64, ss, i as i32 * 8);
                 let val = {
                     let base = builder.block_params(block)[1];
                     let item_offset = builder.ins().iadd_imm(base, i as i64 * 8);
