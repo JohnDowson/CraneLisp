@@ -412,17 +412,6 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     fn translate_call(&mut self, name: SmolStr, exprs: Vec<Expr>) -> Result<Value> {
-        let func = unsafe {
-            *(*lookup_value(dbg! {name.clone()}).ok_or_else(|| {
-                eprintln!("Undefined in call translation");
-                CranelispError::Eval(EvalError::Undefined(
-                    (&*name).to_owned(),
-                    exprs.first().unwrap().span(),
-                ))
-            })?)
-            .as_func()
-        };
-
         // malloc
         let mut m_sig = self.module.make_signature();
         m_sig.params.push(AbiParam::new(types::I64));
@@ -443,17 +432,24 @@ impl<'a> FunctionTranslator<'a> {
         memflags.set_aligned();
 
         #[allow(clippy::fn_to_numeric_cast)]
-        if func.body as u64 != 0 {
+        if let Some(var) = self.variables.get(&name) {
+            dbg! {&name};
             let sig = self.builder.func.import_signature(sig);
-            // dirty hack to get around bugged bitcast_raw
-            let callee = self.builder.ins().iconst(types::I64, func.body as i64);
+            let callee = {
+                // This is a pointer to an atom
+                let func_atom = self.builder.use_var(*var);
+                // This is a pointer to a function pointer
+                let func = self.builder.ins().load(types::R64, memflags, func_atom, 8);
+                // This is a function pointer
+                self.builder.ins().load(types::R64, memflags, func, 0)
+            }; //self.builder.ins().iconst(types::I64, func.body as i64);
+               // dirty hack to get around bugged bitcast_raw
             let ss = self.builder.create_stack_slot(StackSlotData {
                 kind: StackSlotKind::ExplicitSlot,
                 size: 8,
             });
-            let addr = self.builder.ins().stack_addr(types::R64, ss, 0);
-            self.builder.ins().store(memflags, callee, addr, 0);
-            let callee = self.builder.ins().load(types::R64, memflags, addr, 0);
+            self.builder.ins().stack_store(callee, ss, 0);
+            let callee = self.builder.ins().stack_load(types::R64, ss, 0);
             //let callee = self.builder.ins().bitcast(types::R64, callee);
 
             let mut arg_values = Vec::new();
@@ -579,19 +575,22 @@ fn declare_variables(
             );
             builder.def_var(var, val);
             for (i, name) in args.iter().enumerate() {
+                let mut memflags = MemFlags::new();
+                memflags.set_aligned();
+                let ss = builder.create_stack_slot(StackSlotData {
+                    kind: StackSlotKind::ExplicitSlot,
+                    size: 8,
+                });
+                let addr = builder.ins().stack_addr(types::R64, ss, 0);
                 let val = {
                     let base = builder.block_params(block)[1];
-                    let var_addr = builder.ins().iadd_imm(base, i as i64 * 8);
+                    let item_offset = builder.ins().iadd_imm(base, i as i64 * 8);
                     // dirty hack to get around bugged bitcast_raw
-                    let mut memflags = MemFlags::new();
-                    memflags.set_aligned();
-                    let ss = builder.create_stack_slot(StackSlotData {
-                        kind: StackSlotKind::ExplicitSlot,
-                        size: 8,
-                    });
-                    let addr = builder.ins().stack_addr(types::R64, ss, 0);
-                    builder.ins().store(memflags, var_addr, addr, 0);
-                    builder.ins().load(types::R64, memflags, addr, 0)
+
+                    builder.ins().store(memflags, item_offset, addr, 0);
+                    let var_addr = builder.ins().load(types::R64, memflags, addr, 0);
+
+                    builder.ins().load(types::R64, memflags, var_addr, 0)
                 };
                 let var = declare_variable(
                     types::R64,

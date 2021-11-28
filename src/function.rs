@@ -9,6 +9,7 @@ use crate::{
 use std::{fmt::Debug, str::FromStr};
 
 #[derive(Clone, Copy)]
+#[repr(transparent)]
 pub struct Func {
     pub body: unsafe extern "C" fn(usize, *mut *mut Atom) -> *mut Atom,
 }
