@@ -29,13 +29,6 @@
                 "scopeName": "source.cranelisp",
                 "path": "./syntaxes/cranelisp.tmLanguage.json"
             }
-        ],
-        "themes": [
-            {
-                "label": "cranelisp",
-                "uiTheme": "vs-dark",
-                "path": "./themes/cranelisp.tmTheme.json"
-            }
         ]
     }
 }
