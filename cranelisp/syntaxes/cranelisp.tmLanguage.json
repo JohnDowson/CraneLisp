@@ -1,0 +1,118 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "CraneLisp",
+	"patterns": [
+		{
+			"include": "#keywords"
+		},
+		{
+			"include": "#comments"
+		},
+		{
+			"include": "#strings"
+		},
+		{
+			"include": "#sexpr"
+		},
+		{
+			"include": "#symbols"
+		},
+		{
+			"include": "#numbers"
+		},
+		{
+			"include": "#quoted_symbols"
+		}
+	],
+	"repository": {
+		"keywords": {
+			"patterns": [
+				{
+					"name": "keyword.control.cranelisp",
+					"match": "\\b(defun|loop|if|return|let)\\b"
+				}
+			]
+		},
+		"sexpr": {
+			"begin": "\\(",
+			"end": "\\)",
+			"beginCaptures": {
+				"0": {
+					"name": "punctuation.paren.open.cranelisp"
+				}
+			},
+			"endCaptures": {
+				"0": {
+					"name": "punctuation.paren.close.cranelisp"
+				}
+			},
+			"name": "expression.group.cranelisp",
+			"patterns": [
+				{
+					"include": "#keywords"
+				},
+				{
+					"include": "#strings"
+				},
+				{
+					"include": "#sexpr"
+				},
+				{
+					"include": "#symbols"
+				},
+				{
+					"include": "#comments"
+				},
+				{
+					"include": "#numbers"
+				},
+				{
+					"include": "#quoted_symbols"
+				}
+			]
+		},
+		"comments": {
+			"match": "^#.*$",
+			"name": "comment.cranelisp"
+		},
+		"strings": {
+			"name": "string.quoted.double.cranelisp",
+			"begin": "\"",
+			"end": "\"",
+			"patterns": [
+				{
+					"name": "constant.character.escape.cranelisp",
+					"match": "\\\\."
+				}
+			]
+		},
+		"symbols": {
+			"name": "identifier.cranelisp",
+			"begin": "[a-zA-Z]",
+			"end": "\\b",
+			"patterns": [
+				{
+					"name": "identifier.cranelisp",
+					"match": "\\\\."
+				}
+			]
+		},
+		"quoted_symbols": {
+			"name": "string.quoted.double.cranelisp",
+			"begin": "'\\w",
+			"end": "\\b",
+			"patterns": [
+				{
+					"name": "constant.character.escape.cranelisp",
+					"match": "\\\\."
+				}
+			]
+		},
+		"numbers": {
+			"name": "constant.numeric",
+			"begin": "\\d",
+			"end": "\\b"
+		}
+	},
+	"scopeName": "source.cranelisp"
+}

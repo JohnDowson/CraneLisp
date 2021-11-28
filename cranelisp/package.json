@@ -1,0 +1,41 @@
+{
+    "name": "cranelisp",
+    "displayName": "CraneLisp",
+    "description": "Language support for CraneLisp",
+    "version": "0.0.1",
+    "engines": {
+        "vscode": "^1.62.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "cranelisp",
+                "aliases": [
+                    "CraneLisp",
+                    "cranelisp"
+                ],
+                "extensions": [
+                    "crl"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "cranelisp",
+                "scopeName": "source.cranelisp",
+                "path": "./syntaxes/cranelisp.tmLanguage.json"
+            }
+        ],
+        "themes": [
+            {
+                "label": "cranelisp",
+                "uiTheme": "vs-dark",
+                "path": "./themes/cranelisp.tmTheme.json"
+            }
+        ]
+    }
+}

@@ -1,0 +1,5 @@
+{
+  "editor.tokenColorCustomizations": {
+    "constant.integer.escape.cranelisp": "#FF0000"
+  }
+}

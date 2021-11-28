@@ -23,8 +23,10 @@ pub enum CranelispError {
     ReplIO(#[from] rustyline::error::ReadlineError),
     #[error("")]
     Eval(EvalError),
-    #[error("Couldn't get input: {0}")]
+    #[error("Jit error: {0}")]
     JIT(#[from] cranelift_module::ModuleError),
+    #[error("Jit error: {0}")]
+    Optimizer(#[from] cranelift::codegen::CodegenError),
 }
 
 pub fn syntax<T>(error: SyntaxError) -> Result<T> {
@@ -40,7 +42,37 @@ pub enum EvalError {
     Undefined(String, Span),
     ArityMismatch,
     InvalidSignature(String),
-    UnexpectedVirtualFunction(Span),
+}
+
+impl Display for EvalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "EvalError::")?;
+        match self {
+            EvalError::Undefined(_, _) => write!(f, "Undefined"),
+            EvalError::ArityMismatch => write!(f, "ArityMismatch"),
+            EvalError::InvalidSignature(_) => write!(f, "InvalidSignature"),
+        }
+    }
+}
+
+pub trait Spans {
+    fn spans(self) -> Vec<(Span, String)>;
+}
+
+impl Spans for &EvalError {
+    fn spans(self) -> Vec<(Span, String)> {
+        match self {
+            EvalError::Undefined(msg, span) => vec![(*span, msg.clone())],
+            EvalError::ArityMismatch => panic!("arity mismatch"),
+            EvalError::InvalidSignature(_) => todo!(),
+        }
+    }
+}
+
+impl Spans for &SyntaxError {
+    fn spans(self) -> Vec<(Span, String)> {
+        self.spans.clone()
+    }
 }
 
 #[derive(Debug)]

@@ -1,12 +1,6 @@
 use std::{fs::File, io::Read, time::Instant};
 
-use cranelisp::{
-    eval::Value,
-    function::{FnBody, Function, Signature, Type},
-    jit::Jit,
-    Env,
-};
-use fnv::FnvHashMap;
+use cranelisp::jit::Jit;
 use rustyline::{
     validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
     Config, EditMode,
@@ -16,6 +10,7 @@ use rustyline_derive::{Completer, Helper, Highlighter, Hinter};
 use somok::Somok;
 
 use crate::{lexer::Lexer, parser::Parser, provide_diagnostic, Result};
+
 #[derive(Completer, Helper, Highlighter, Hinter)]
 struct InputValidator {
     brackets: MatchingBracketValidator,
@@ -27,70 +22,8 @@ impl Validator for InputValidator {
     }
 }
 
-fn eval_env() -> Env {
-    let mut env = FnvHashMap::default();
-    let func = Function::new(
-        Signature::build()
-            .push_arg(("a".into(), Type::Float))
-            .set_name("cl_print".into())
-            .set_ret(Type::Float)
-            .finish()
-            .unwrap(),
-        FnBody::Native(crate::libcl::cl_print as *const u8),
-    );
-    env.insert("cl_print".into(), Value::Func(func));
-
-    let func = Function::new(
-        Signature::build()
-            .set_foldable(Type::Float)
-            .set_name("+".into())
-            .set_ret(Type::Float)
-            .finish()
-            .unwrap(),
-        FnBody::Native(crate::libcl::plus as *const u8),
-    );
-    env.insert("+".into(), Value::Func(func));
-
-    let func = Function::new(
-        Signature::build()
-            .set_foldable(Type::Float)
-            .set_name("-".into())
-            .set_ret(Type::Float)
-            .finish()
-            .unwrap(),
-        FnBody::Native(crate::libcl::minus as *const u8),
-    );
-    env.insert("-".into(), Value::Func(func));
-
-    let func = Function::new(
-        Signature::build()
-            .set_foldable(Type::Float)
-            .set_name("<".into())
-            .set_ret(Type::Float)
-            .finish()
-            .unwrap(),
-        FnBody::Native(crate::libcl::less_than as *const u8),
-    );
-    env.insert("<".into(), Value::Func(func));
-
-    let func = Function::new(
-        Signature::build()
-            .set_foldable(Type::Float)
-            .set_name(">".into())
-            .set_ret(Type::Float)
-            .finish()
-            .unwrap(),
-        FnBody::Native(crate::libcl::more_than as *const u8),
-    );
-    env.insert(">".into(), Value::Func(func));
-    env
-}
-
 pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
-    let mut env = eval_env();
-
-    let mut jit = Jit::default();
-    jit.show_clir = clir;
+    let mut jit = Jit::new(clir);
 
     let h = InputValidator {
         brackets: MatchingBracketValidator::new(),
@@ -102,14 +35,13 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
         .build();
     let mut rl = Editor::with_config(config);
     rl.set_helper(Some(h));
-
     loop {
         let src = rl.readline("> ")?;
         if let "q\n" = &*src {
             break;
         }
         let t1 = Instant::now();
-        let mut lexer = match Lexer::new(src.clone(), "repl") {
+        let mut lexer = match Lexer::new(src.clone()) {
             Ok(l) => l,
             Err(e) => {
                 provide_diagnostic(&e, src);
@@ -132,8 +64,8 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
             println!("{:#?}", tree);
         }
 
-        let evaluated = match crate::eval::eval(tree, &mut env, &mut jit) {
-            Ok(v) => v,
+        match { crate::eval::eval(tree, &mut jit) } {
+            Ok(v) => println!(": {:?}", v),
             Err(e) => {
                 provide_diagnostic(&e, src);
                 continue;
@@ -142,9 +74,8 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
 
         let t2 = Instant::now();
         if time {
-            println!(": {:?}", t2 - t1);
+            println!("{:?}", t2 - t1);
         }
-        println!("{:?}", evaluated);
     }
     Ok(())
 }
@@ -156,13 +87,10 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> R
         buf
     };
 
-    let mut env = eval_env();
-
-    let mut jit = Jit::default();
-    jit.show_clir = clir;
+    let mut jit = Jit::new(clir);
 
     let t1 = Instant::now();
-    let mut lexer = match Lexer::new(src.clone(), "repl") {
+    let mut lexer = match Lexer::new(src.clone()) {
         Ok(l) => l,
         Err(e) => {
             provide_diagnostic(&e, src);
@@ -176,6 +104,7 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> R
     while !lexer.finished() {
         let tree = match Parser::new(&mut lexer).parse_expr() {
             Ok(e) => e,
+            Err(cranelisp::CranelispError::EOF) => continue,
             Err(e) => {
                 provide_diagnostic(&e, src);
                 return e.error();
@@ -186,7 +115,7 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> R
         }
 
         let t1 = Instant::now();
-        match crate::eval::eval(tree, &mut env, &mut jit) {
+        match crate::eval::eval(tree, &mut jit) {
             Ok(v) => println!(": {:?}", v),
             Err(e) => {
                 provide_diagnostic(&e, src);

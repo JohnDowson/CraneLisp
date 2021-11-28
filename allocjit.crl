@@ -1,0 +1,4 @@
+(defun func(i) (
+    cl_alloc_value
+))
+(func 1)
