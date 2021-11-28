@@ -143,7 +143,7 @@ impl Jit {
             .func
             .signature
             .returns
-            .push(AbiParam::new(types::R64));
+            .push(AbiParam::new(types::I64));
 
         let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_ctx);
 
@@ -201,7 +201,7 @@ fn store_new_atom(trans: &mut FunctionTranslator, target: Value, tag: Tag, value
 }
 fn alloc_heap_atom(trans: &mut FunctionTranslator) -> Result<Value> {
     let mut sig = trans.module.make_signature();
-    sig.returns.push(AbiParam::new(types::R64));
+    sig.returns.push(AbiParam::new(types::I64));
 
     let callee = trans
         .module
@@ -243,20 +243,7 @@ impl<'a> FunctionTranslator<'a> {
                         .map(|var| self.builder.use_var(*var))
                         .or_else(|| {
                             let var = lookup_value(s.clone())? as i64;
-                            let var_addr = self.builder.ins().iconst(types::I64, var);
-                            // dirty hack to get around bugged bitcast_raw
-                            let mut memflags = MemFlags::new();
-                            memflags.set_aligned();
-                            let ss = self.builder.create_stack_slot(StackSlotData {
-                                kind: StackSlotKind::ExplicitSlot,
-                                size: 8,
-                            });
-                            let addr = self.builder.ins().stack_addr(types::R64, ss, 0);
-                            self.builder.ins().store(memflags, var_addr, addr, 0);
-                            self.builder
-                                .ins()
-                                .load(types::R64, memflags, addr, 0)
-                                .some()
+                            self.builder.ins().iconst(types::I64, var).some()
                         })
                         .ok_or_else(|| CranelispError::Eval(EvalError::Undefined(s.into(), span)))
                 }
@@ -266,7 +253,7 @@ impl<'a> FunctionTranslator<'a> {
                     kind: StackSlotKind::ExplicitSlot,
                     size: 16,
                 });
-                let slot_addr = self.builder.ins().stack_addr(types::R64, slot, 0);
+                let slot_addr = self.builder.ins().stack_addr(types::I64, slot, 0);
                 let int = self.builder.ins().f64const(n);
                 let tag = self.builder.ins().iconst(types::I64, 1);
                 let mut memflags = MemFlags::new();
@@ -322,7 +309,7 @@ impl<'a> FunctionTranslator<'a> {
                     kind: StackSlotKind::ExplicitSlot,
                     size: 16,
                 });
-                let slot_addr = self.builder.ins().stack_addr(types::R64, slot, 0);
+                let slot_addr = self.builder.ins().stack_addr(types::I64, slot, 0);
                 let int = self.builder.ins().iconst(types::I64, int);
                 let tag = self.builder.ins().iconst(types::I64, 1);
                 let mut memflags = MemFlags::new();
@@ -342,7 +329,7 @@ impl<'a> FunctionTranslator<'a> {
 
                 self.builder.ins().stack_store(string_tag, atom, 0);
                 self.builder.ins().stack_store(ptr, atom, 8);
-                self.builder.ins().stack_addr(types::R64, atom, 0).okay()
+                self.builder.ins().stack_addr(types::I64, atom, 0).okay()
             }
         }
     }
@@ -431,7 +418,7 @@ impl<'a> FunctionTranslator<'a> {
         // malloc
         let mut m_sig = self.module.make_signature();
         m_sig.params.push(AbiParam::new(types::I64));
-        m_sig.returns.push(AbiParam::new(types::R64));
+        m_sig.returns.push(AbiParam::new(types::I64));
         let malloc = self
             .module
             .declare_function("malloc", Linkage::Import, &m_sig)?;
@@ -439,10 +426,10 @@ impl<'a> FunctionTranslator<'a> {
 
         let mut sig = self.module.make_signature();
 
-        sig.returns.push(AbiParam::new(types::R64));
+        sig.returns.push(AbiParam::new(types::I64));
 
         sig.params.push(AbiParam::new(types::I64));
-        sig.params.push(AbiParam::new(types::R64));
+        sig.params.push(AbiParam::new(types::I64));
 
         let mut memflags = MemFlags::new();
         memflags.set_aligned();
@@ -455,18 +442,10 @@ impl<'a> FunctionTranslator<'a> {
                 // This is a pointer to an atom
                 let func_atom = self.builder.use_var(*var);
                 // This is a pointer to a function pointer
-                let func = self.builder.ins().load(types::R64, memflags, func_atom, 8);
+                let func = self.builder.ins().load(types::I64, memflags, func_atom, 8);
                 // This is a function pointer
-                self.builder.ins().load(types::R64, memflags, func, 0)
-            }; //self.builder.ins().iconst(types::I64, func.body as i64);
-               // dirty hack to get around bugged bitcast_raw
-            let ss = self.builder.create_stack_slot(StackSlotData {
-                kind: StackSlotKind::ExplicitSlot,
-                size: 8,
-            });
-            self.builder.ins().stack_store(callee, ss, 0);
-            let callee = self.builder.ins().stack_load(types::R64, ss, 0);
-            //let callee = self.builder.ins().bitcast(types::R64, callee);
+                self.builder.ins().load(types::I64, memflags, func, 0)
+            };
 
             let mut arg_values = Vec::new();
 
@@ -543,7 +522,7 @@ impl<'a> FunctionTranslator<'a> {
         let lie_block = self.builder.create_block();
         let merge_block = self.builder.create_block();
 
-        self.builder.append_block_param(merge_block, types::R64);
+        self.builder.append_block_param(merge_block, types::I64);
         let mut memflags = MemFlags::new();
         memflags.set_aligned();
         let cond_val = self.builder.ins().load(types::I64, memflags, cond_val, 8);
@@ -593,23 +572,13 @@ fn declare_variables(
             for (i, name) in args.iter().enumerate() {
                 let mut memflags = MemFlags::new();
                 memflags.set_aligned();
-                let ss = builder.create_stack_slot(StackSlotData {
-                    kind: StackSlotKind::ExplicitSlot,
-                    size: 16 * (args.len() / 2) as u32,
-                });
-                let addr = builder.ins().stack_addr(types::R64, ss, i as i32 * 8);
                 let val = {
                     let base = builder.block_params(block)[1];
                     let item_offset = builder.ins().iadd_imm(base, i as i64 * 8);
-                    // dirty hack to get around bugged bitcast_raw
-
-                    builder.ins().store(memflags, item_offset, addr, 0);
-                    let var_addr = builder.ins().load(types::R64, memflags, addr, 0);
-
-                    builder.ins().load(types::R64, memflags, var_addr, 0)
+                    builder.ins().load(types::I64, memflags, item_offset, 0)
                 };
                 let var = declare_variable(
-                    types::R64,
+                    types::I64,
                     builder,
                     &mut variables,
                     &mut index,
@@ -655,7 +624,7 @@ fn declare_variables_in_expr(
             declare_variables_in_expr(*expr, builder, variables, index)
         }
         Expr::Let(name, expr, _) => {
-            declare_variable(types::R64, builder, variables, index, name);
+            declare_variable(types::I64, builder, variables, index, name);
             declare_variables_in_expr(*expr, builder, variables, index)
         }
         Expr::Integer(_, _) => (),
