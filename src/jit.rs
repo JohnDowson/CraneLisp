@@ -261,7 +261,21 @@ impl<'a> FunctionTranslator<'a> {
                         .ok_or_else(|| CranelispError::Eval(EvalError::Undefined(s.into(), span)))
                 }
             }
-            Expr::Float(n, _) => self.builder.ins().f64const(n).okay(),
+            Expr::Float(n, _) => {
+                let slot = self.builder.create_stack_slot(StackSlotData {
+                    kind: StackSlotKind::ExplicitSlot,
+                    size: 16,
+                });
+                let slot_addr = self.builder.ins().stack_addr(types::R64, slot, 0);
+                let int = self.builder.ins().f64const(n);
+                let tag = self.builder.ins().iconst(types::I64, 1);
+                let mut memflags = MemFlags::new();
+                memflags.set_aligned();
+
+                self.builder.ins().store(memflags, tag, slot_addr, 0);
+                self.builder.ins().store(memflags, int, slot_addr, 8);
+                slot_addr.okay()
+            }
             Expr::List(mut exprs, _) if matches!(exprs.first(), Some(Expr::Symbol(..))) => {
                 if let Expr::Symbol(name, ..) = exprs.remove(0) {
                     self.translate_call(name, exprs)
@@ -284,53 +298,7 @@ impl<'a> FunctionTranslator<'a> {
                     store_new_atom(self, a, Tag::String, s).okay()
                 }
                 expr @ (Expr::Integer(_, _) | Expr::Float(_, _)) => self.translate_expr(expr),
-                Expr::List(exprs, _) => {
-                    let head = alloc_heap_atom(self)?;
-
-                    if !exprs.is_empty() {
-                        let mut memflags = MemFlags::new();
-                        memflags.set_aligned();
-                        let tag = self.builder.ins().iconst(types::I64, 4);
-                        let pair = alloc_heap_atom(self)?;
-                        self.builder.ins().store(memflags, tag, head, 0);
-                        self.builder.ins().store(memflags, pair, head, 8);
-
-                        let mut previous = pair;
-                        if !exprs.is_empty() {
-                            let vals = exprs
-                                .into_iter()
-                                .map(|e| self.translate_expr(e))
-                                .collect::<Result<Vec<_>>>()?;
-
-                            let car = alloc_heap_atom(self)?;
-                            store_atom(self, vals[0], car);
-                            self.builder.ins().store(memflags, car, pair, 0);
-
-                            for &val in &vals[1..] {
-                                let head = alloc_heap_atom(self)?;
-                                let mut memflags = MemFlags::new();
-                                memflags.set_aligned();
-                                let tag = self.builder.ins().iconst(types::I64, 4);
-                                let pair = alloc_heap_atom(self)?;
-                                self.builder.ins().store(memflags, tag, head, 0);
-                                self.builder.ins().store(memflags, pair, head, 8);
-
-                                let car = alloc_heap_atom(self)?;
-                                store_atom(self, val, car);
-                                self.builder.ins().store(memflags, car, pair, 0);
-
-                                self.builder.ins().store(memflags, head, previous, 8);
-
-                                previous = pair;
-                            }
-
-                            // store nil into cdr of the last pair
-                            let nil = alloc_heap_atom(self)?;
-                            self.builder.ins().store(memflags, nil, previous, 8);
-                        }
-                    }
-                    head.okay()
-                }
+                Expr::List(exprs, _) => self.translate_qlist(exprs),
                 Expr::Quoted(_, _) => todo!(),
                 Expr::Defun(_, _) => todo!(),
                 Expr::If(_, _, _, _) => todo!(),
@@ -377,6 +345,54 @@ impl<'a> FunctionTranslator<'a> {
                 self.builder.ins().stack_addr(types::R64, atom, 0).okay()
             }
         }
+    }
+
+    fn translate_qlist(&mut self, exprs: Vec<Expr>) -> Result<Value> {
+        let head = alloc_heap_atom(self)?;
+
+        if !exprs.is_empty() {
+            let mut memflags = MemFlags::new();
+            memflags.set_aligned();
+            let tag = self.builder.ins().iconst(types::I64, 4);
+            let pair = alloc_heap_atom(self)?;
+            self.builder.ins().store(memflags, tag, head, 0);
+            self.builder.ins().store(memflags, pair, head, 8);
+
+            let mut previous = pair;
+            if !exprs.is_empty() {
+                let vals = exprs
+                    .into_iter()
+                    .map(|e| self.translate_expr(e))
+                    .collect::<Result<Vec<_>>>()?;
+
+                let car = alloc_heap_atom(self)?;
+                store_atom(self, vals[0], car);
+                self.builder.ins().store(memflags, car, pair, 0);
+
+                for &val in &vals[1..] {
+                    let head = alloc_heap_atom(self)?;
+                    let mut memflags = MemFlags::new();
+                    memflags.set_aligned();
+                    let tag = self.builder.ins().iconst(types::I64, 4);
+                    let pair = alloc_heap_atom(self)?;
+                    self.builder.ins().store(memflags, tag, head, 0);
+                    self.builder.ins().store(memflags, pair, head, 8);
+
+                    let car = alloc_heap_atom(self)?;
+                    store_atom(self, val, car);
+                    self.builder.ins().store(memflags, car, pair, 0);
+
+                    self.builder.ins().store(memflags, head, previous, 8);
+
+                    previous = pair;
+                }
+
+                // store nil into cdr of the last pair
+                let nil = alloc_heap_atom(self)?;
+                self.builder.ins().store(memflags, nil, previous, 8);
+            }
+        }
+        head.okay()
     }
 
     fn translate_loop(&mut self, expr: Expr) -> Result<Value> {
