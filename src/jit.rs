@@ -12,7 +12,9 @@ use std::str::FromStr;
 use crate::eval::value::{CLString, Symbol, Tag};
 use crate::function::Func;
 use crate::parser::{Args, DefunExpr, Expr};
-use crate::{libcl::*, lookup_value, set_value, Atom, CranelispError, EvalError, Result};
+use crate::{
+    libcl::*, lookup_value, set_value, symbol_defined, Atom, CranelispError, EvalError, Result,
+};
 
 pub struct Jit {
     builder_ctx: FunctionBuilderContext,
@@ -474,7 +476,7 @@ impl<'a> FunctionTranslator<'a> {
 
             let call = self.builder.ins().call_indirect(sig, callee, &arg_values);
             self.builder.inst_results(call)[0].okay()
-        } else {
+        } else if symbol_defined(name.clone()) {
             let callee = self.module.declare_function(&name, Linkage::Import, &sig)?;
             let local_callee = self.module.declare_func_in_func(callee, self.builder.func);
 
@@ -505,6 +507,8 @@ impl<'a> FunctionTranslator<'a> {
 
             let call = self.builder.ins().call(local_callee, &arg_values);
             self.builder.inst_results(call)[0].okay()
+        } else {
+            CranelispError::Eval(EvalError::Undefined(name.into(), exprs[0].span())).error()
         }
     }
 

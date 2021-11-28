@@ -1,0 +1,15 @@
+(defun addone (v) (
+    (+ 1 v)
+))
+(defun map (list op third) (
+    (let list2 list)
+    (loop
+        (if list2
+            ((let first (car list2))
+             (setf first (op first))
+             (let list2 (cdr list2)))
+            (return)))
+    list
+))
+
+(map '(1 2 3) addone)

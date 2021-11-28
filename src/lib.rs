@@ -51,6 +51,10 @@ pub fn intern(sym: SmolStr) -> SmolStr {
     }
 }
 
+pub fn symbol_defined(sym: SmolStr) -> bool {
+    unsafe { ENV.borrow().contains(&Symbol::new(sym)) }
+}
+
 pub fn set_value(sym: Symbol) {
     unsafe {
         ENV.get_mut().replace(sym);
@@ -146,7 +150,7 @@ pub mod libcl {
     #[no_mangle]
     pub unsafe extern "C" fn car(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 1 {
-            return Atom::NULL.boxed().leak();
+            return Atom::ERROR.boxed().leak();
         }
         match (**atoms).tag {
             Tag::Null => *atoms,
@@ -158,7 +162,7 @@ pub mod libcl {
     #[no_mangle]
     pub unsafe extern "C" fn cdr(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 1 {
-            return Atom::NULL.boxed().leak();
+            return Atom::ERROR.boxed().leak();
         }
         match (**atoms).tag {
             Tag::Null => *atoms,
@@ -169,7 +173,7 @@ pub mod libcl {
 
     pub unsafe extern "C" fn cons(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 2 {
-            return Atom::NULL.boxed().leak();
+            return Atom::ERROR.boxed().leak();
         }
         let (a, b) = (*atoms, *atoms.add(1));
 
@@ -180,12 +184,12 @@ pub mod libcl {
 
     pub unsafe extern "C" fn setf(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 2 {
-            return Atom::NULL.boxed().leak();
+            return Atom::ERROR.boxed().leak();
         }
-        let (place, new) = (*atoms, *atoms.add(1));
-        *place = *new;
+        let (place, new) = (*atoms, **atoms.add(1));
+        *place = new;
 
-        Atom::NULL.boxed().leak()
+        new.boxed().leak()
     }
 
     #[no_mangle]
