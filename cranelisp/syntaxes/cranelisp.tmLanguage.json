@@ -22,6 +22,9 @@
 		},
 		{
 			"include": "#quoted_symbols"
+		},
+		{
+			"include": "#operators"
 		}
 	],
 	"repository": {
@@ -68,6 +71,9 @@
 				},
 				{
 					"include": "#quoted_symbols"
+				},
+				{
+					"include": "#operators"
 				}
 			]
 		},
@@ -87,12 +93,12 @@
 			]
 		},
 		"symbols": {
-			"name": "identifier.cranelisp",
+			"name": "entity.name.cranelisp",
 			"begin": "[a-zA-Z]",
 			"end": "\\b",
 			"patterns": [
 				{
-					"name": "identifier.cranelisp",
+					"name": "entity.name.cranelisp",
 					"match": "\\\\."
 				}
 			]
@@ -103,15 +109,19 @@
 			"end": "\\b",
 			"patterns": [
 				{
-					"name": "constant.character.escape.cranelisp",
+					"name": "entity.name.cranelisp",
 					"match": "\\\\."
 				}
 			]
 		},
 		"numbers": {
-			"name": "constant.numeric",
+			"name": "constant.numeric.cranelisp",
 			"begin": "\\d",
 			"end": "\\b"
+		},
+		"operators": {
+			"name": "keyword.operators.cranelisp",
+			"match": "\\+|\\*|<|>"
 		}
 	},
 	"scopeName": "source.cranelisp"

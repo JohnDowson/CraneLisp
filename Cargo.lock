@@ -205,16 +205,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cranelift-preopt"
-version = "0.78.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3263413ed2f990d9ca21483fe79ca75b7f60a7d8375e8481b2e5dec962f2640"
-dependencies = [
- "cranelift-codegen",
- "cranelift-entity",
-]
-
-[[package]]
 name = "cranelisp"
 version = "0.1.0"
 dependencies = [
@@ -223,7 +213,6 @@ dependencies = [
  "cranelift",
  "cranelift-jit",
  "cranelift-module",
- "cranelift-preopt",
  "fnv",
  "kmp",
  "once_cell",

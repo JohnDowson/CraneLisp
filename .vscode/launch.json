@@ -19,8 +19,35 @@
                     "kind": "bin"
                 }
             },
+            "initCommands": [
+                "settings set target.x86-disassembly-flavor intel"
+            ],
             "args": [
-                // "./fib0.crl"
+                "./listjit.crl"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable in release mode",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=cranelisp",
+                    "--package=cranelisp",
+                    "--release"
+                ],
+                "filter": {
+                    "name": "cranelisp",
+                    "kind": "bin"
+                }
+            },
+            "initCommands": [
+                "settings set target.x86-disassembly-flavor intel"
+            ],
+            "args": [
+                "./allocjit.crl"
             ],
             "cwd": "${workspaceFolder}"
         },
