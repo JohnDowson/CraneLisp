@@ -1,4 +1,4 @@
-use somok::Somok;
+use somok::{Leaksome, Somok};
 
 use crate::{
     eval::Atom,
@@ -24,7 +24,11 @@ impl Func {
     }
 
     pub fn call(&self, args: Vec<Atom>) -> Atom {
-        let (count, args) = (args.len(), &mut args.leak().as_mut_ptr());
+        let args = args
+            .into_iter()
+            .map(|a| a.boxed().leak() as *mut Atom)
+            .collect::<Vec<*mut Atom>>();
+        let (count, args) = (args.len(), args.leak().as_mut_ptr());
         unsafe { *(self.body)(count, args) }
     }
 }
