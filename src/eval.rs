@@ -10,139 +10,6 @@ use crate::{
 };
 use somok::Somok;
 
-// "loop" => {
-//     self.lexer.next_token()?;
-//     let expr = self.parse_expr()?;
-//     self.skip_whitespace()?;
-//     let rparen = self.eat_rparen()?;
-//     Expr::Loop(Box::new(expr), Span::merge(token.span(), rparen.span()))
-//         .okay()
-// }
-// "return" => {
-//     self.lexer.next_token()?;
-//     self.skip_whitespace()?;
-//     let next = self.lexer.next();
-//     let expr = match self.parse_expr() {
-//         Ok(expr) => expr.boxed().some(),
-//         Err(_e) => {
-//             self.lexer.rewind_to(next);
-//             None
-//         }
-//     };
-//     let rparen = self.eat_rparen()?;
-//     Expr::Return(expr, Span::merge(token.span(), rparen.span())).okay()
-// }
-// "let" => {
-//     self.lexer.next_token()?;
-//     let name = self.eat_symbol()?;
-//     let expr = self.parse_expr()?;
-//     self.skip_whitespace()?;
-//     let rparen = self.eat_rparen()?;
-//     intern(name.clone());
-//     Expr::Let(
-//         name,
-//         Box::new(expr),
-//         Span::merge(token.span(), rparen.span()),
-//     )
-//     .okay()
-// }
-// "if" => {
-//     self.lexer.next_token()?;
-//     let cond = self.parse_expr()?;
-
-//     let truth = self.parse_expr()?;
-
-//     let lie = self.parse_expr()?;
-
-//     self.skip_whitespace()?;
-//     let rparen = self.eat_rparen()?;
-//     match (true, true, true) {
-//         (true, true, true) => Expr::If(
-//             Box::new(cond),
-//             Box::new(truth),
-//             Box::new(lie),
-//             Span::merge(token.span(), rparen.span()),
-//         )
-//         .okay(),
-//         (true, true, false) => syntax!(
-//             UnexpectedExpression,
-//             (
-//                 lie.span(),
-//                 format!("Unexpected {} where List is expected", lie)
-//             )
-//         )
-//         .error(),
-//         (true, false, true) => syntax!(
-//             UnexpectedExpression,
-//             (
-//                 truth.span(),
-//                 format!("Unexpected {} where List is expected", truth)
-//             )
-//         )
-//         .error(),
-//         (true, false, false) => syntax!(
-//             UnexpectedExpression,
-//             (
-//                 truth.span(),
-//                 format!("Unexpected {} where List is expected", truth)
-//             ),
-//             (
-//                 lie.span(),
-//                 format!("Unexpected {} where List is expected", lie)
-//             )
-//         )
-//         .error(),
-//         (false, true, true) => syntax!(
-//             UnexpectedExpression,
-//             (
-//                 cond.span(),
-//                 format!("Unexpected {} where List is expected", cond)
-//             )
-//         )
-//         .error(),
-//         (false, true, false) => syntax!(
-//             UnexpectedExpression,
-//             (
-//                 cond.span(),
-//                 format!("Unexpected {} where List is expected", cond)
-//             ),
-//             (
-//                 lie.span(),
-//                 format!("Unexpected {} where List is expected", lie)
-//             )
-//         )
-//         .error(),
-//         (false, false, true) => syntax!(
-//             UnexpectedExpression,
-//             (
-//                 cond.span(),
-//                 format!("Unexpected {} where List is expected", cond)
-//             ),
-//             (
-//                 truth.span(),
-//                 format!("Unexpected {} where List is expected", truth)
-//             )
-//         )
-//         .error(),
-//         (false, false, false) => syntax!(
-//             UnexpectedExpression,
-//             (
-//                 cond.span(),
-//                 format!("Unexpected {} where List is expected", cond)
-//             ),
-//             (
-//                 truth.span(),
-//                 format!("Unexpected {} where List is expected", truth)
-//             ),
-//             (
-//                 lie.span(),
-//                 format!("Unexpected {} where List is expected", lie)
-//             )
-//         )
-//         .error(),
-//     }
-// }
-
 pub fn eval((atom, span): (Atom, Span)) -> Result<Atom> {
     match atom.tag {
         Tag::Symbol => unsafe {
@@ -163,7 +30,8 @@ pub fn eval((atom, span): (Atom, Span)) -> Result<Atom> {
                     let sym_value = unsafe { *maybe_symbol.as_symbol().val };
                     match sym {
                         "let" => {
-                            let val = eval((ocdr(atom), span))?;
+                            let sym = dbg! {ocar(ocdr(atom))}.as_symbol().name.clone();
+                            let val = eval((ocar(ocdr(ocdr(atom))), span))?;
                             set_value(Symbol::new_with_atom(sym, val));
                             return val.okay();
                         }

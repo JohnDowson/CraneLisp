@@ -26,6 +26,7 @@ pub mod eval;
 pub mod function;
 // pub mod jit;
 pub mod lexer;
+pub mod mem;
 pub mod parser;
 pub mod value;
 

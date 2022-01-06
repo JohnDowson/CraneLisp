@@ -1,11 +1,8 @@
-#![allow(dead_code)]
 use crate::function::Type;
 use crate::lexer::{Lexer, Token};
 use crate::value::{cons, Atom, Symbol};
 use crate::{intern, CranelispError, Result, Span};
-use smol_str::SmolStr;
 use somok::{Leaksome, Somok};
-use std::str::FromStr;
 pub type Arglist = Vec<(String, Type)>;
 
 pub struct Parser<'l> {
@@ -76,71 +73,6 @@ impl<'l> Parser<'l> {
                 }
                 _ => return ().okay(),
             }
-        }
-    }
-
-    fn eat_lparen(&mut self) -> Result<Token> {
-        match self.lexer.next_token()? {
-            token if token.is_lparen() => token.okay(),
-            token if token.is_whitespace() => self.eat_lparen(),
-            token => syntax!(
-                UnexpectedToken,
-                (token.span(), "LParen expected here".into())
-            )
-            .error(),
-        }
-    }
-
-    fn eat_rparen(&mut self) -> Result<Token> {
-        match self.lexer.next_token()? {
-            token if token.is_rparen() => token.okay(),
-            token if token.is_whitespace() => self.eat_rparen(),
-            token => syntax!(
-                UnexpectedToken,
-                (token.span(), "RParen expected here".into())
-            )
-            .error(),
-        }
-    }
-
-    fn _eat_type(&mut self) -> Result<Type> {
-        match self.lexer.next_token()? {
-            Token::Symbol(sym, ..) => Type::from_str(&sym)?.okay(),
-            Token::Whitespace(..) => self._eat_type(),
-            token => syntax!(
-                UnexpectedToken,
-                (
-                    token.span(),
-                    format!("Type expected here, found {:?}", token)
-                )
-            )
-            .error(),
-        }
-    }
-
-    fn _eat_type_separator(&mut self) -> Result<()> {
-        match self.lexer.next_token()? {
-            Token::TypeSeparator(..) => ().okay(),
-            token => syntax!(
-                UnexpectedToken,
-                (
-                    token.span(),
-                    format!("Type separator expected here, found {:?}", token)
-                )
-            )
-            .error(),
-        }
-    }
-
-    fn eat_symbol(&mut self) -> Result<SmolStr> {
-        match self.lexer.next_token()? {
-            Token::Symbol(sym, ..) => sym.okay(),
-            token if token.is_whitespace() => self.eat_symbol(),
-            token => syntax!(
-                UnexpectedToken,
-                (token.span(), "Symbol expected here".into())
-            )
-            .error(),
         }
     }
 
