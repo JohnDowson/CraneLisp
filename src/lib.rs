@@ -26,7 +26,6 @@ pub mod eval;
 pub mod function;
 pub mod jit;
 pub mod lexer;
-pub mod list;
 pub mod parser;
 
 use std::{cell::RefCell, collections::BTreeSet};
@@ -40,6 +39,10 @@ pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
 
 static mut ENV: Lazy<RefCell<BTreeSet<Symbol>>> =
     Lazy::new(|| RefCell::new(std::collections::BTreeSet::default()));
+
+pub fn dump_env() {
+    unsafe { println!("{:#?}", ENV.borrow()) }
+}
 
 pub fn intern(sym: SmolStr) -> SmolStr {
     unsafe {
@@ -143,14 +146,19 @@ impl ariadne::Span for Span {
 
 #[allow(clippy::missing_safety_doc)]
 pub mod libcl {
-    use somok::{Leaksome, Somok};
+    use std::{
+        fs::{File, OpenOptions},
+        io::{BufRead, BufReader},
+        os::unix::prelude::{FromRawFd, IntoRawFd},
+    };
 
-    use crate::eval::value::{head, tail, Atom, Tag};
+    use crate::eval::value::{head, tail, Atom, CLString, ErrorCode::*, Tag};
+    use somok::{Leaksome, Somok};
 
     #[no_mangle]
     pub unsafe extern "C" fn car(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 1 {
-            return Atom::ERROR.boxed().leak();
+            return Atom::new_error(Arity).boxed().leak();
         }
         match (**atoms).tag {
             Tag::Null => *atoms,
@@ -162,7 +170,7 @@ pub mod libcl {
     #[no_mangle]
     pub unsafe extern "C" fn cdr(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 1 {
-            return Atom::ERROR.boxed().leak();
+            return Atom::new_error(Arity).boxed().leak();
         }
         match (**atoms).tag {
             Tag::Null => *atoms,
@@ -173,7 +181,7 @@ pub mod libcl {
 
     pub unsafe extern "C" fn cons(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 2 {
-            return Atom::ERROR.boxed().leak();
+            return Atom::new_error(Arity).boxed().leak();
         }
         let (a, b) = (*atoms, *atoms.add(1));
 
@@ -184,7 +192,7 @@ pub mod libcl {
 
     pub unsafe extern "C" fn setf(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 2 {
-            return Atom::ERROR.boxed().leak();
+            return Atom::new_error(Arity).boxed().leak();
         }
         let (place, new) = (*atoms, **atoms.add(1));
         *place = new;
@@ -211,6 +219,58 @@ pub mod libcl {
     }
 
     #[no_mangle]
+    pub unsafe extern "C" fn cl_open(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
+        if count < 1 {
+            return Atom::new_error(Arity).boxed().leak();
+        }
+        let a = **atoms;
+        match a.tag {
+            Tag::String => {
+                let fd = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .open(a.as_string())
+                    .unwrap()
+                    .into_raw_fd();
+                Atom::new_port(fd).boxed().leak()
+            }
+            _ => Atom::new_error(Type).boxed().leak(),
+        }
+    }
+
+    #[no_mangle]
+    pub unsafe extern "C" fn cl_close(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
+        if count < 1 {
+            return Atom::new_error(Arity).boxed().leak();
+        }
+        let a = **atoms;
+        match a.tag {
+            Tag::Port => {
+                File::from_raw_fd(a.as_port());
+                Atom::NULL.boxed().leak()
+            }
+            _ => Atom::new_error(Type).boxed().leak(),
+        }
+    }
+
+    #[no_mangle]
+    pub unsafe extern "C" fn cl_readline(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
+        if count < 1 {
+            return Atom::new_error(Arity).boxed().leak();
+        }
+        let a = **atoms;
+        match a.tag {
+            Tag::Port => {
+                let file = File::from_raw_fd(a.as_port());
+                let s = BufReader::new(file).lines().next().unwrap().unwrap();
+                Atom::new_string(CLString::from_string(s)).boxed().leak()
+            }
+            _ => Atom::new_error(Type).boxed().leak(),
+        }
+    }
+
+    #[no_mangle]
     pub unsafe extern "C" fn cl_alloc_value(_: usize, _: *mut *mut Atom) -> *mut Atom {
         Atom::NULL.boxed().leak()
     }
@@ -218,7 +278,7 @@ pub mod libcl {
     #[no_mangle]
     pub unsafe extern "C" fn add(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count < 2 {
-            return Atom::ERROR.boxed().leak();
+            return Atom::new_error(Arity).boxed().leak();
         }
 
         let mut a = **atoms;
@@ -239,7 +299,7 @@ pub mod libcl {
     #[no_mangle]
     pub unsafe extern "C" fn sub(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count < 2 {
-            return Atom::ERROR.boxed().leak();
+            return Atom::new_error(Arity).boxed().leak();
         }
 
         let mut a = **atoms;
@@ -260,7 +320,7 @@ pub mod libcl {
     #[no_mangle]
     pub unsafe extern "C" fn less_than(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count < 2 {
-            return Atom::ERROR.boxed().leak();
+            return Atom::new_error(Arity).boxed().leak();
         }
 
         let mut a = **atoms;
@@ -281,7 +341,7 @@ pub mod libcl {
     #[no_mangle]
     pub unsafe extern "C" fn more_than(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count < 2 {
-            return Atom::ERROR.boxed().leak();
+            return Atom::new_error(Arity).boxed().leak();
         }
         let mut a = **atoms;
 

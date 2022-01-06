@@ -59,6 +59,9 @@ impl Jit {
         defsym!(builder; cl_alloc_value);
         defsym!(builder; car);
         defsym!(builder; cdr);
+        defsym!(builder; "open" => cl_open);
+        defsym!(builder; "close" => cl_close);
+        defsym!(builder; "readline" => cl_readline);
 
         let module = JITModule::new(builder);
         Jit {
@@ -161,8 +164,6 @@ impl Jit {
             variables,
             module: &mut self.module,
         };
-        let mut memflags = MemFlags::new();
-        memflags.set_aligned();
 
         let return_value = trans.translate_expr(fun.body)?;
 
@@ -438,7 +439,6 @@ impl<'a> FunctionTranslator<'a> {
 
         #[allow(clippy::fn_to_numeric_cast)]
         if let Some(var) = self.variables.get(&name) {
-            dbg! {&name};
             let sig = self.builder.func.import_signature(sig);
             let callee = {
                 // This is a pointer to an atom

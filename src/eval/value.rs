@@ -4,6 +4,7 @@ use somok::{Leaksome, Somok};
 use std::{
     fmt::{Debug, Display},
     ops::Deref,
+    os::unix::prelude::RawFd,
 };
 mod cl_string;
 pub use cl_string::CLString;
@@ -74,6 +75,7 @@ pub struct Atom {
     pub tag: Tag,
     value: u64,
 }
+
 impl Atom {
     pub const NULL: Self = Self {
         tag: Tag::Null,
@@ -84,10 +86,6 @@ impl Atom {
         value: 1,
     };
     pub const FALSE: Self = Self::NULL;
-    pub const ERROR: Self = Self {
-        tag: Tag::Error,
-        value: 0,
-    };
 
     pub fn new_int(value: i64) -> Self {
         Self {
@@ -129,7 +127,7 @@ impl Atom {
     pub fn new_string(value: CLString) -> Self {
         Self {
             tag: Tag::String,
-            value: value.as_ptr() as u64,
+            value: value.boxed().leak() as *mut _ as u64,
         }
     }
     pub fn new_symbol(value: &Symbol) -> Self {
@@ -146,6 +144,20 @@ impl Atom {
         }
     }
 
+    pub fn new_error(error_code: ErrorCode) -> Self {
+        Self {
+            tag: Tag::Error,
+            value: error_code as u64,
+        }
+    }
+
+    pub fn new_port(fd: RawFd) -> Self {
+        Self {
+            tag: Tag::Port,
+            value: fd as u64,
+        }
+    }
+
     pub fn as_int(&self) -> i64 {
         match self.tag {
             Tag::Error => todo!(),
@@ -158,6 +170,7 @@ impl Atom {
             Tag::String => todo!(),
             Tag::Return => todo!(),
             Tag::Symbol => todo!(),
+            Tag::Port => todo!(),
         }
     }
 
@@ -173,6 +186,7 @@ impl Atom {
             Tag::String => todo!(),
             Tag::Return => todo!(),
             Tag::Symbol => todo!(),
+            Tag::Port => todo!(),
         }
     }
 
@@ -188,6 +202,7 @@ impl Atom {
             Tag::String => todo!(),
             Tag::Return => self.value as *mut T,
             Tag::Symbol => todo!(),
+            Tag::Port => todo!(),
         }
     }
 
@@ -203,6 +218,7 @@ impl Atom {
             Tag::String => todo!(),
             Tag::Return => todo!(),
             Tag::Symbol => todo!(),
+            Tag::Port => todo!(),
         }
     }
 
@@ -218,6 +234,7 @@ impl Atom {
             Tag::String => todo!(),
             Tag::Return => todo!(),
             Tag::Symbol => todo!(),
+            Tag::Port => todo!(),
         }
     }
     pub fn as_bool(&self) -> bool {
@@ -232,6 +249,7 @@ impl Atom {
             Tag::String => true,
             Tag::Return => true,
             Tag::Symbol => self.as_string() == "t",
+            Tag::Port => todo!(),
         }
     }
     pub fn as_string(&self) -> &str {
@@ -246,6 +264,7 @@ impl Atom {
             Tag::String => unsafe { &*(self.value as *mut CLString) },
             Tag::Return => panic!("Can't cast Return to String"),
             Tag::Symbol => self.as_symbol(),
+            Tag::Port => todo!(),
         }
     }
     pub fn as_symbol(&self) -> &Symbol {
@@ -260,6 +279,39 @@ impl Atom {
             Tag::String => todo!(),
             Tag::Return => todo!(),
             Tag::Symbol => unsafe { &*(self.value as *mut Symbol) },
+            Tag::Port => todo!(),
+        }
+    }
+
+    pub fn as_error(&self) -> ErrorCode {
+        match self.tag {
+            Tag::Error => self.value.into(),
+            Tag::Null => todo!(),
+            Tag::Int => todo!(),
+            Tag::Float => todo!(),
+            Tag::Ptr => todo!(),
+            Tag::Pair => todo!(),
+            Tag::Func => todo!(),
+            Tag::Symbol => todo!(),
+            Tag::String => todo!(),
+            Tag::Return => todo!(),
+            Tag::Port => todo!(),
+        }
+    }
+
+    pub fn as_port(&self) -> RawFd {
+        match self.tag {
+            Tag::Error => todo!(),
+            Tag::Null => todo!(),
+            Tag::Int => todo!(),
+            Tag::Float => todo!(),
+            Tag::Ptr => todo!(),
+            Tag::Pair => todo!(),
+            Tag::Func => todo!(),
+            Tag::Symbol => todo!(),
+            Tag::String => todo!(),
+            Tag::Return => todo!(),
+            Tag::Port => self.value as RawFd,
         }
     }
 }
@@ -268,7 +320,7 @@ impl Debug for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?} ", self.tag)?;
         match self.tag {
-            Tag::Error => write!(f, "{:?}", self.value),
+            Tag::Error => write!(f, "{:?}", self.as_error()),
             Tag::Null => ().okay(),
             Tag::Int => write!(f, "{:?}", self.as_int()),
             Tag::Float => write!(f, "{:?}", self.as_float()),
@@ -278,6 +330,7 @@ impl Debug for Atom {
             Tag::String => write!(f, "{:?}", self.as_string()),
             Tag::Return => write!(f, "{:?}", unsafe { *self.as_ptr::<Atom>() }),
             Tag::Symbol => write!(f, "{:?}", self.as_symbol()),
+            Tag::Port => write!(f, "{:?}", self.as_port()),
         }
     }
 }
@@ -285,7 +338,7 @@ impl Debug for Atom {
 impl Display for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.tag {
-            Tag::Error => write!(f, "Error {}", self.value),
+            Tag::Error => write!(f, "Error {:?}", self.as_error()),
             Tag::Null => write!(f, "Null"),
             Tag::Int => write!(f, "{}", self.as_int()),
             Tag::Float => write!(f, "{}", self.as_float()),
@@ -295,6 +348,7 @@ impl Display for Atom {
             Tag::String => write!(f, "{}", self.as_string()),
             Tag::Return => write!(f, "{}", unsafe { &*self.as_ptr::<Atom>() }),
             Tag::Symbol => write!(f, "{}", self.as_string()),
+            Tag::Port => write!(f, "{}", self.as_port()),
         }
     }
 }
@@ -312,12 +366,13 @@ pub enum Tag {
     Symbol = 6,
     String = 7,
     Return = 8,
+    Port = 9,
 }
 
 impl Debug for Tag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Tag::Error => write!(f, "Error"),
+            Self::Error => write!(f, "Error"),
             Self::Null => write!(f, "Null"),
             Self::Int => write!(f, "Int"),
             Self::Float => write!(f, "Float"),
@@ -326,7 +381,25 @@ impl Debug for Tag {
             Self::Func => write!(f, "Func"),
             Self::String => write!(f, "String"),
             Self::Return => write!(f, "Return"),
-            Tag::Symbol => write!(f, "Symbol"),
+            Self::Symbol => write!(f, "Symbol"),
+            Self::Port => write!(f, "Port"),
+        }
+    }
+}
+
+#[derive(Debug)]
+#[repr(u64)]
+pub enum ErrorCode {
+    Arity = 0,
+    Type = 1,
+}
+
+impl From<u64> for ErrorCode {
+    fn from(n: u64) -> Self {
+        match n {
+            0 => Self::Arity,
+            1 => Self::Type,
+            _ => panic!("Invalid error code"),
         }
     }
 }

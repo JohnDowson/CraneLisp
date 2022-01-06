@@ -3,8 +3,8 @@ use somok::{Leaksome, Somok};
 use crate::{
     eval::Atom,
     jit::Jit,
-    parser::{Arglist, DefunExpr, Expr},
-    CranelispError, EvalError, Result,
+    parser::{Arglist, DefunExpr},
+    CranelispError, Result,
 };
 use std::{fmt::Debug, str::FromStr};
 
@@ -39,12 +39,6 @@ impl Debug for Func {
     }
 }
 
-#[derive(Clone)]
-pub enum FnBody {
-    Virtual(Expr),
-    Native(*const u8),
-}
-
 #[derive(Debug, Clone)]
 pub enum FnArgs {
     Arglist(Arglist),
@@ -55,67 +49,15 @@ pub enum FnArgs {
 pub struct Signature {
     pub args: Vec<String>,
     pub name: String,
-    pub foldable: bool,
-}
-
-pub struct SignatureBuilder {
-    args: Vec<String>,
-    name: Option<String>,
-    foldable: bool,
-}
-impl SignatureBuilder {
-    pub fn set_foldable(mut self, foldable: bool) -> Self {
-        self.foldable = foldable;
-        self
-    }
-    pub fn set_name(mut self, n: String) -> Self {
-        self.name = Some(n);
-        self
-    }
-    pub fn push_arg(mut self, arg: String) -> Self {
-        self.args.push(arg);
-        self
-    }
-    pub fn finish(self) -> Result<Signature> {
-        let name = self.name.ok_or_else(|| {
-            CranelispError::Eval(EvalError::InvalidSignature("Missing name".into()))
-        })?;
-        let args = if self.foldable {
-            vec!["a".into(), "b".into()]
-        } else {
-            self.args
-        };
-        Signature {
-            args,
-            name,
-            foldable: self.foldable,
-        }
-        .okay()
-    }
 }
 
 impl Signature {
-    pub fn build() -> SignatureBuilder {
-        SignatureBuilder {
-            args: vec![],
-            name: None,
-            foldable: false,
-        }
-    }
-    pub fn build_from_arglist(args: Vec<String>) -> SignatureBuilder {
-        SignatureBuilder {
-            args,
-            name: None,
-            foldable: false,
-        }
+    pub fn new(name: String, args: Vec<String>) -> Self {
+        Self { args, name }
     }
 
     pub fn arity(&self) -> usize {
-        if self.foldable {
-            usize::MAX
-        } else {
-            self.args.len()
-        }
+        self.args.len()
     }
 
     pub fn args(&self) -> Vec<String> {

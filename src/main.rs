@@ -1,11 +1,8 @@
-use std::fmt::Debug;
-
 use clap::Parser;
-
-#[allow(dead_code, unused_imports)]
 pub use cranelisp::*;
 pub use errors::*;
 use repl::{eval_source, repl};
+use std::fmt::Debug;
 mod repl;
 
 #[derive(clap::Parser)]

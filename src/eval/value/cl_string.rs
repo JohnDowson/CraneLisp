@@ -219,7 +219,7 @@ impl CLString {
         self.len() == 0
     }
     pub fn as_str(&self) -> &str {
-        unsafe { std::str::from_utf8_unchecked(self.as_bytes()) }
+        std::str::from_utf8(self.as_bytes()).unwrap()
     }
     pub fn into_string(self) -> String {
         self.as_str().into()
@@ -262,6 +262,7 @@ impl CLString {
                 Tag::Symbol => "%y",
                 Tag::String => "%s",
                 Tag::Return => "%p",
+                Tag::Port => "%d",
             };
             let replacement = format!("{}", value);
             replaced = replaced.replaced(pat, &replacement)
