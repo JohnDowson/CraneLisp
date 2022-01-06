@@ -309,6 +309,12 @@ impl FromStr for CLString {
     }
 }
 
+impl From<String> for CLString {
+    fn from(s: String) -> Self {
+        Self::from_string(s)
+    }
+}
+
 impl Display for CLString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())

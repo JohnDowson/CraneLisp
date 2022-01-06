@@ -1,73 +1,16 @@
 use crate::function::Func;
-use smol_str::SmolStr;
 use somok::{Leaksome, Somok};
 use std::{
     fmt::{Debug, Display},
-    ops::Deref,
     os::unix::prelude::RawFd,
 };
+mod symbol;
+pub use symbol::*;
 mod cl_string;
 pub use cl_string::CLString;
 pub use cl_string::CLVector;
 mod pair;
 pub use pair::*;
-
-#[derive(Clone)]
-pub struct Symbol {
-    pub name: SmolStr,
-    pub val: *mut Atom,
-}
-
-impl Debug for Symbol {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Symbol")
-            .field("name", &self.name)
-            .field("val", unsafe { &*self.val })
-            .finish()
-    }
-}
-
-impl Eq for Symbol {}
-
-impl PartialEq for Symbol {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-    }
-}
-
-impl PartialOrd for Symbol {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.name.partial_cmp(&other.name)
-    }
-}
-
-impl Ord for Symbol {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.name.cmp(&other.name)
-    }
-}
-
-impl Symbol {
-    pub fn new(name: impl Into<SmolStr>) -> Self {
-        Self {
-            name: name.into(),
-            val: Atom::NULL.boxed().leak(),
-        }
-    }
-    pub fn new_with_atom(name: impl Into<SmolStr>, atom: Atom) -> Self {
-        Self {
-            name: name.into(),
-            val: atom.boxed().leak(),
-        }
-    }
-}
-impl Deref for Symbol {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.name
-    }
-}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -99,16 +42,16 @@ impl Atom {
             value: value.to_bits(),
         }
     }
-    pub fn new_pair(value: &mut Pair) -> Self {
+    pub fn new_pair(value: Box<Pair>) -> Self {
         Self {
             tag: Tag::Pair,
-            value: value as *mut _ as u64,
+            value: value.leak() as *mut _ as u64,
         }
     }
-    pub fn new_ptr<T>(value: &mut T) -> Self {
+    pub fn new_ptr<T: 'static>(value: Box<T>) -> Self {
         Self {
             tag: Tag::Ptr,
-            value: value as *mut _ as u64,
+            value: value.leak() as *mut _ as u64,
         }
     }
     pub fn new_func(value: Func) -> Self {
@@ -130,10 +73,10 @@ impl Atom {
             value: value.boxed().leak() as *mut _ as u64,
         }
     }
-    pub fn new_symbol(value: &Symbol) -> Self {
+    pub fn new_symbol(value: Box<Symbol>) -> Self {
         Self {
             tag: Tag::Symbol,
-            value: value as *const _ as u64,
+            value: value.leak() as *const _ as u64,
         }
     }
     pub fn new_return(value: Atom) -> Self {
@@ -270,12 +213,12 @@ impl Atom {
     pub fn as_symbol(&self) -> &Symbol {
         match self.tag {
             Tag::Error => todo!(),
-            Tag::Null => panic!("Can't cast Null to String"),
-            Tag::Int => panic!("Can't cast Int to String"),
-            Tag::Float => panic!("Can't cast Float to String"),
-            Tag::Ptr => panic!("Can't cast Ptr to String"),
-            Tag::Pair => panic!("Can't cast Pair to String"),
-            Tag::Func => panic!("Can't cast Func to String"),
+            Tag::Null => panic!("Can't cast Null to Symbol"),
+            Tag::Int => panic!("Can't cast Int to Symbol"),
+            Tag::Float => panic!("Can't cast Float to Symbol"),
+            Tag::Ptr => panic!("Can't cast Ptr to Symbol"),
+            Tag::Pair => panic!("Can't cast Pair to Symbol"),
+            Tag::Func => panic!("Can't cast Func to Symbol"),
             Tag::String => todo!(),
             Tag::Return => todo!(),
             Tag::Symbol => unsafe { &*(self.value as *mut Symbol) },

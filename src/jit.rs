@@ -9,9 +9,8 @@ use std::collections::HashMap;
 use std::str::FromStr;
 //use std::slice;
 
-use crate::eval::value::{CLString, Symbol, Tag};
 use crate::function::Func;
-use crate::parser::{Args, DefunExpr, Expr};
+use crate::value::{car, scar, scdr, CLString, Symbol, Tag};
 use crate::{
     libcl::*, lookup_value, set_value, symbol_defined, Atom, CranelispError, EvalError, Result,
 };
@@ -28,7 +27,7 @@ macro_rules! defsym {
     // Named
     ($builder:expr; $sym:expr => $fun:path) => {
         $builder.symbol($sym, $fun as *const u8);
-        crate::set_value(crate::eval::value::Symbol::new_with_atom(
+        crate::set_value(crate::value::Symbol::new_with_atom(
             $sym,
             crate::Atom::new_func(crate::function::Func::from_fn($fun)),
         ));
@@ -37,7 +36,7 @@ macro_rules! defsym {
     ($builder:expr; $fun:path) => {
         $builder.symbol(std::stringify!($fun), $fun as *const u8);
         $builder.symbol(stringify!($fun), $fun as *const u8);
-        crate::set_value(crate::eval::value::Symbol::new_with_atom(
+        crate::set_value(crate::value::Symbol::new_with_atom(
             stringify!($fun),
             crate::Atom::new_func(crate::function::Func::from_fn($fun)),
         ));
@@ -73,9 +72,8 @@ impl Jit {
         }
     }
 
-    pub fn compile(&mut self, fun: DefunExpr) -> Result<*const u8> {
+    pub fn compile(&mut self, name: SmolStr, fun: Atom) -> Result<*const u8> {
         self.module.clear_context(&mut self.ctx);
-        let name = fun.name.clone();
 
         set_value(Symbol {
             name,
@@ -87,7 +85,6 @@ impl Jit {
             .boxed()
             .leak(),
         });
-        let name = fun.name.clone();
         self.translate(fun)?;
 
         let id = if &name == "_" {
@@ -129,7 +126,7 @@ impl Jit {
         Ok(code)
     }
 
-    fn translate(&mut self, fun: DefunExpr) -> Result<()> {
+    fn translate(&mut self, fun: Atom) -> Result<()> {
         // Arg count
         self.ctx
             .func
@@ -165,7 +162,7 @@ impl Jit {
             module: &mut self.module,
         };
 
-        let return_value = trans.translate_expr(fun.body)?;
+        let return_value = trans.translate_expr(fun)?;
 
         trans.builder.ins().return_(&[return_value]);
 
@@ -235,9 +232,9 @@ struct FunctionTranslator<'a> {
 }
 
 impl<'a> FunctionTranslator<'a> {
-    fn translate_expr(&mut self, expr: Expr) -> Result<Value> {
-        match expr {
-            Expr::Symbol(s, span) => {
+    fn translate_expr(&mut self, expr: Atom) -> Result<Value> {
+        match expr.tag {
+            Tag::Symbol => {
                 if &s == "nil" {
                     alloc_heap_atom(self)
                 } else {
@@ -251,7 +248,8 @@ impl<'a> FunctionTranslator<'a> {
                         .ok_or_else(|| CranelispError::Eval(EvalError::Undefined(s.into(), span)))
                 }
             }
-            Expr::Float(n, _) => {
+            Tag::Float => {
+                let n = expr.as_float();
                 let slot = self.builder.create_stack_slot(StackSlotData {
                     kind: StackSlotKind::ExplicitSlot,
                     size: 16,
@@ -266,22 +264,18 @@ impl<'a> FunctionTranslator<'a> {
                 self.builder.ins().store(memflags, int, slot_addr, 8);
                 slot_addr.okay()
             }
-            Expr::List(mut exprs, _) if matches!(exprs.first(), Some(Expr::Symbol(..))) => {
-                if let Expr::Symbol(name, ..) = exprs.remove(0) {
-                    self.translate_call(name, exprs)
-                } else {
-                    // SAFETY: We have just checked that first element exists
-                    unreachable!()
-                }
+            Tag::Pair if matches!(scar(&mut expr).tag, Tag::Symbol) => {
+                let name = scar(&mut expr).as_symbol().name;
+                self.translate_call(name, scdr(&mut expr))
             }
-            Expr::List(exprs, _) => {
+            Tag::Pair => {
                 let mut list_ret = alloc_heap_atom(self)?;
                 for expr in exprs {
                     list_ret = self.translate_expr(expr)?;
                 }
                 list_ret.okay()
             }
-            Expr::Quoted(expr, _) => match *expr {
+            Tag::Quoted(expr, _) => match *expr {
                 Expr::Symbol(s, _) => {
                     let s = CLString::from_str(&s).unwrap().boxed().leak() as *mut _ as i64;
                     let a = alloc_heap_atom(self).unwrap();

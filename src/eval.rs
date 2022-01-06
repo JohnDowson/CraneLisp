@@ -1,115 +1,220 @@
-use std::str::FromStr;
-
-use somok::Somok;
-pub mod value;
 use crate::{
-    eval::value::{list, CLString, Symbol},
-    function::Func,
-    jit::Jit,
+    // jit::Jit,
     lookup_value,
-    parser::Expr,
-    set_value, CranelispError, EvalError, Result, TryRemove,
+    set_value,
+    value::{map_to_vec, ocar, ocdr, Atom, Symbol, Tag},
+    CranelispError,
+    EvalError,
+    Result,
+    Span,
 };
-pub use value::Atom;
+use somok::Somok;
 
-pub fn eval(expr: Expr, jit: &mut Jit) -> Result<Atom> {
-    match expr {
-        Expr::String(s, _) => Atom::new_string(CLString::from_string(s)).okay(),
-        Expr::Symbol(s, span) => unsafe {
-            (*lookup_value(s.clone()).ok_or_else(|| {
+// "loop" => {
+//     self.lexer.next_token()?;
+//     let expr = self.parse_expr()?;
+//     self.skip_whitespace()?;
+//     let rparen = self.eat_rparen()?;
+//     Expr::Loop(Box::new(expr), Span::merge(token.span(), rparen.span()))
+//         .okay()
+// }
+// "return" => {
+//     self.lexer.next_token()?;
+//     self.skip_whitespace()?;
+//     let next = self.lexer.next();
+//     let expr = match self.parse_expr() {
+//         Ok(expr) => expr.boxed().some(),
+//         Err(_e) => {
+//             self.lexer.rewind_to(next);
+//             None
+//         }
+//     };
+//     let rparen = self.eat_rparen()?;
+//     Expr::Return(expr, Span::merge(token.span(), rparen.span())).okay()
+// }
+// "let" => {
+//     self.lexer.next_token()?;
+//     let name = self.eat_symbol()?;
+//     let expr = self.parse_expr()?;
+//     self.skip_whitespace()?;
+//     let rparen = self.eat_rparen()?;
+//     intern(name.clone());
+//     Expr::Let(
+//         name,
+//         Box::new(expr),
+//         Span::merge(token.span(), rparen.span()),
+//     )
+//     .okay()
+// }
+// "if" => {
+//     self.lexer.next_token()?;
+//     let cond = self.parse_expr()?;
+
+//     let truth = self.parse_expr()?;
+
+//     let lie = self.parse_expr()?;
+
+//     self.skip_whitespace()?;
+//     let rparen = self.eat_rparen()?;
+//     match (true, true, true) {
+//         (true, true, true) => Expr::If(
+//             Box::new(cond),
+//             Box::new(truth),
+//             Box::new(lie),
+//             Span::merge(token.span(), rparen.span()),
+//         )
+//         .okay(),
+//         (true, true, false) => syntax!(
+//             UnexpectedExpression,
+//             (
+//                 lie.span(),
+//                 format!("Unexpected {} where List is expected", lie)
+//             )
+//         )
+//         .error(),
+//         (true, false, true) => syntax!(
+//             UnexpectedExpression,
+//             (
+//                 truth.span(),
+//                 format!("Unexpected {} where List is expected", truth)
+//             )
+//         )
+//         .error(),
+//         (true, false, false) => syntax!(
+//             UnexpectedExpression,
+//             (
+//                 truth.span(),
+//                 format!("Unexpected {} where List is expected", truth)
+//             ),
+//             (
+//                 lie.span(),
+//                 format!("Unexpected {} where List is expected", lie)
+//             )
+//         )
+//         .error(),
+//         (false, true, true) => syntax!(
+//             UnexpectedExpression,
+//             (
+//                 cond.span(),
+//                 format!("Unexpected {} where List is expected", cond)
+//             )
+//         )
+//         .error(),
+//         (false, true, false) => syntax!(
+//             UnexpectedExpression,
+//             (
+//                 cond.span(),
+//                 format!("Unexpected {} where List is expected", cond)
+//             ),
+//             (
+//                 lie.span(),
+//                 format!("Unexpected {} where List is expected", lie)
+//             )
+//         )
+//         .error(),
+//         (false, false, true) => syntax!(
+//             UnexpectedExpression,
+//             (
+//                 cond.span(),
+//                 format!("Unexpected {} where List is expected", cond)
+//             ),
+//             (
+//                 truth.span(),
+//                 format!("Unexpected {} where List is expected", truth)
+//             )
+//         )
+//         .error(),
+//         (false, false, false) => syntax!(
+//             UnexpectedExpression,
+//             (
+//                 cond.span(),
+//                 format!("Unexpected {} where List is expected", cond)
+//             ),
+//             (
+//                 truth.span(),
+//                 format!("Unexpected {} where List is expected", truth)
+//             ),
+//             (
+//                 lie.span(),
+//                 format!("Unexpected {} where List is expected", lie)
+//             )
+//         )
+//         .error(),
+//     }
+// }
+
+pub fn eval((atom, span): (Atom, Span)) -> Result<Atom> {
+    match atom.tag {
+        Tag::Symbol => unsafe {
+            let s = atom.as_symbol();
+            (*lookup_value(s.name.clone()).ok_or_else(|| {
                 eprintln!("Undefined in eval translation");
-                CranelispError::Eval(EvalError::Undefined(s.into(), span))
+                CranelispError::Eval(EvalError::Undefined(s.name.clone().into(), span))
             })?)
             .okay()
         },
-        Expr::Float(val, _) => Atom::new_float(val).okay(),
-        Expr::Integer(val, _) => Atom::new_int(val).okay(),
-        Expr::List(mut list, _) => {
-            let fun = match list.try_remove(0) {
-                Some(Expr::Symbol(s, span)) => unsafe {
-                    *lookup_value(s.clone()).ok_or_else(|| {
-                        eprintln!("Undefined in eval translation");
-                        CranelispError::Eval(EvalError::Undefined(s.into(), span))
-                    })?
-                },
-                Some(expr @ Expr::Defun(..)) => eval(expr, jit)?,
-                Some(expr @ Expr::If(..)) => return eval(expr, jit),
-                Some(Expr::Float(_val, _)) => todo!(),
-                Some(expr @ Expr::List(..)) => {
-                    let mut last = eval(expr, jit);
-                    for expr in list {
-                        last = eval(expr, jit);
+        Tag::Pair => {
+            let maybe_symbol = ocar(atom);
+            let fun = match maybe_symbol.tag {
+                Tag::Error => unreachable!(),
+                Tag::Func => atom,
+                Tag::Symbol => {
+                    let sym = &*maybe_symbol.as_symbol().name;
+                    let sym_value = unsafe { *maybe_symbol.as_symbol().val };
+                    match sym {
+                        "let" => {
+                            let val = eval((ocdr(atom), span))?;
+                            set_value(Symbol::new_with_atom(sym, val));
+                            return val.okay();
+                        }
+                        "if" => {
+                            let cond = eval((ocar(ocdr(atom)), span))?;
+                            if cond.as_bool() {
+                                let truth = ocar(ocdr(ocdr(atom)));
+                                return eval((truth, span));
+                            } else {
+                                let lie = ocar(ocdr(ocdr(ocdr(atom))));
+                                return eval((lie, span));
+                            }
+                        }
+                        _ => match sym_value.tag {
+                            Tag::Func => sym_value,
+                            _ => {
+                                return CranelispError::Eval(EvalError::UnexpectedAtom(
+                                    span,
+                                    format!("Unexpected atom: {}", sym_value),
+                                ))
+                                .error();
+                            }
+                        },
                     }
-                    return last;
                 }
-                Some(expr @ Expr::Let(_, _, _)) => {
-                    return eval(expr, jit);
+                _ => {
+                    return CranelispError::Eval(EvalError::UnexpectedAtom(
+                        span,
+                        format!("Unexpected atom: {}", atom),
+                    ))
+                    .error();
                 }
-                Some(expr @ Expr::Return(..)) => return eval(expr, jit),
-                Some(expr @ Expr::Loop(..)) => return eval(expr, jit),
-                None => todo!("empty list"),
-                e => todo!("Error: unquoted list that isn't application\n{:#?}", e),
             };
-            let values = list
-                .into_iter()
-                .map(|e| eval(e, jit))
-                .collect::<Result<Vec<_>>>()?;
+            let values = map_to_vec(ocdr(atom), |a| eval((a, span)).unwrap());
             unsafe { (*fun.as_func()).call(values).okay() }
         }
-        Expr::Quoted(expr, _) => match *expr {
-            Expr::Symbol(s, _) => Atom::new_string(CLString::from_str(&s).unwrap()).okay(),
-            Expr::Float(_, _) => todo!(),
-            Expr::Integer(_, _) => todo!(),
-            Expr::List(exprs, _) => {
-                let items = exprs
-                    .into_iter()
-                    .map(|e| eval(e, jit))
-                    .collect::<Result<Vec<_>>>()?;
-                list(items).okay()
-            }
-            Expr::Quoted(_, _) => todo!(),
-            Expr::Defun(_, _) => todo!(),
-            Expr::If(_, _, _, _) => todo!(),
-            Expr::Return(_, _) => todo!(),
-            Expr::Loop(_, _) => todo!(),
-            Expr::Let(_, _, _) => todo!(),
-            Expr::String(_, _) => todo!(),
-        },
-        Expr::Defun(defun_expr, _span) => {
-            let name = defun_expr.name.clone();
-            // jit
-            let func = Func::jit(jit, *defun_expr)?;
-            // store
-            if &*name != "_" {
-                set_value(Symbol::new_with_atom(name, Atom::new_func(func)));
-            };
-            Atom::new_func(func).okay()
-        }
-        Expr::Let(sym, expr, _) => {
-            let val = eval(*expr, jit)?;
-            set_value(Symbol::new_with_atom(sym, val));
-            val.okay()
-        }
-        Expr::If(cond, truth, lie, _) => {
-            if eval(*cond, jit)?.as_bool() {
-                eval(*truth, jit)
-            } else {
-                eval(*lie, jit)
-            }
-        }
-        Expr::Return(expr, ..) => {
-            if let Some(e) = expr {
-                Atom::new_return(eval(*e, jit)?).okay()
-            } else {
-                Atom::new_return(Atom::NULL).okay()
-            }
-        }
-        Expr::Loop(body, ..) => {
-            let mut last_val = Atom::NULL;
-            while !matches!(last_val.tag, value::Tag::Return) {
-                last_val = eval(*body.clone(), jit)?;
-            }
-            unsafe { *last_val.as_ptr::<Atom>() }.okay()
-        }
+        _ => atom.okay(),
+        // todo: Quoted, return, loop
+        // Expr::Return(expr, ..) => {
+        //     if let Some(e) = expr {
+        //         Atom::new_return(eval(*e, jit)?).okay()
+        //     } else {
+        //         Atom::new_return(Atom::NULL).okay()
+        //     }
+        // }
+        // Expr::Loop(body, ..) => {
+        //     let mut last_val = Atom::NULL;
+        //     while !matches!(last_val.tag, value::Tag::Return) {
+        //         last_val = eval(*body.clone(), jit)?;
+        //     }
+        //     unsafe { *last_val.as_ptr::<Atom>() }.okay()
+        // }
     }
 }

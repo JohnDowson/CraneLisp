@@ -1,11 +1,6 @@
 use somok::{Leaksome, Somok};
 
-use crate::{
-    eval::Atom,
-    jit::Jit,
-    parser::{Arglist, DefunExpr},
-    CranelispError, Result,
-};
+use crate::{value::Atom, CranelispError, Result};
 use std::{fmt::Debug, str::FromStr};
 
 #[derive(Clone, Copy)]
@@ -18,10 +13,10 @@ impl Func {
     pub fn from_fn(body: unsafe extern "C" fn(usize, *mut *mut Atom) -> *mut Atom) -> Self {
         Self { body }
     }
-    pub fn jit(jit: &mut Jit, defun: DefunExpr) -> Result<Self> {
-        let body = unsafe { std::mem::transmute::<_, _>(jit.compile(defun)?) };
-        Self { body }.okay()
-    }
+    // pub fn jit(jit: &mut Jit, defun: Atom) -> Result<Self> {
+    //     let body = unsafe { std::mem::transmute::<_, _>(jit.compile(todo!(), defun)?) };
+    //     Self { body }.okay()
+    // }
 
     pub fn call(&self, args: Vec<Atom>) -> Atom {
         let args = args
@@ -41,7 +36,6 @@ impl Debug for Func {
 
 #[derive(Debug, Clone)]
 pub enum FnArgs {
-    Arglist(Arglist),
     Foldable(Type),
 }
 

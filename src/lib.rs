@@ -24,33 +24,52 @@ macro_rules! syntax {
 pub mod errors;
 pub mod eval;
 pub mod function;
-pub mod jit;
+// pub mod jit;
 pub mod lexer;
 pub mod parser;
+pub mod value;
 
 use std::{cell::RefCell, collections::BTreeSet};
 
 pub use errors::*;
-use eval::{value::Symbol, Atom};
 use once_cell::unsync::Lazy;
 use smol_str::SmolStr;
 use somok::{Leaksome, Somok};
+use value::{Atom, Symbol};
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
 
 static mut ENV: Lazy<RefCell<BTreeSet<Symbol>>> =
     Lazy::new(|| RefCell::new(std::collections::BTreeSet::default()));
 
+pub fn setup() {
+    set_value(value::Symbol::new_with_atom(
+        "+",
+        Atom::new_func(function::Func::from_fn(libcl::add)),
+    ));
+    set_value(value::Symbol::new_with_atom(
+        "-",
+        Atom::new_func(function::Func::from_fn(libcl::sub)),
+    ));
+    set_value(value::Symbol::new_with_atom("t", Atom::TRUE));
+    set_value(value::Symbol::new_with_atom("nil", Atom::NULL));
+}
+
 pub fn dump_env() {
     unsafe { println!("{:#?}", ENV.borrow()) }
 }
 
-pub fn intern(sym: SmolStr) -> SmolStr {
+pub fn intern(sym: SmolStr) -> Symbol {
+    let sym = Symbol {
+        name: sym,
+        val: Atom::NULL.boxed().leak(),
+    };
     unsafe {
-        ENV.get_mut().insert(Symbol {
-            name: sym.clone(),
-            val: Atom::NULL.boxed().leak(),
-        });
-        sym
+        if let Some(sym) = ENV.borrow().get(&sym) {
+            sym.clone()
+        } else {
+            ENV.get_mut().insert(sym.clone());
+            sym
+        }
     }
 }
 
@@ -152,7 +171,7 @@ pub mod libcl {
         os::unix::prelude::{FromRawFd, IntoRawFd},
     };
 
-    use crate::eval::value::{head, tail, Atom, CLString, ErrorCode::*, Tag};
+    use crate::value::{self, Atom, CLString, ErrorCode::*, Tag};
     use somok::{Leaksome, Somok};
 
     #[no_mangle]
@@ -162,7 +181,7 @@ pub mod libcl {
         }
         match (**atoms).tag {
             Tag::Null => *atoms,
-            Tag::Pair => head(&**atoms),
+            Tag::Pair => value::car(*atoms),
             _ => todo!(),
         }
     }
@@ -174,7 +193,7 @@ pub mod libcl {
         }
         match (**atoms).tag {
             Tag::Null => *atoms,
-            Tag::Pair => tail(&**atoms),
+            Tag::Pair => value::cdr(*atoms),
             _ => todo!(),
         }
     }
@@ -185,9 +204,7 @@ pub mod libcl {
         }
         let (a, b) = (*atoms, *atoms.add(1));
 
-        Atom::new_pair(crate::eval::value::cons(a, b).boxed().leak())
-            .boxed()
-            .leak()
+        crate::value::cons(a, b).boxed().leak()
     }
 
     pub unsafe extern "C" fn setf(count: usize, atoms: *mut *mut Atom) -> *mut Atom {

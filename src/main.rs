@@ -20,6 +20,8 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+
+    cranelisp::setup();
     if let Some(source) = args.source {
         eval_source(
             &source,

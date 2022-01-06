@@ -1,6 +1,5 @@
 use std::{fs::File, io::Read, time::Instant};
 
-use cranelisp::jit::Jit;
 use rustyline::{
     validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
     Config, EditMode,
@@ -22,8 +21,8 @@ impl Validator for InputValidator {
     }
 }
 
-pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
-    let mut jit = Jit::new(clir);
+pub fn repl(time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
+    // let mut jit = Jit::new(clir);
 
     let h = InputValidator {
         brackets: MatchingBracketValidator::new(),
@@ -64,7 +63,7 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
             println!("{:#?}", tree);
         }
 
-        match { crate::eval::eval(tree, &mut jit) } {
+        match { crate::eval::eval(tree) } {
             Ok(v) => println!(": {:?}", v),
             Err(e) => {
                 provide_diagnostic(&e, src);
@@ -80,14 +79,13 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
+pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
     let src = {
         let mut buf = String::new();
         File::open(prog)?.read_to_string(&mut buf)?;
         buf
     };
-
-    let mut jit = Jit::new(clir);
+    // let mut jit = Jit::new(clir);
 
     let t1 = Instant::now();
     let mut lexer = match Lexer::new(src.clone()) {
@@ -115,7 +113,7 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> R
         }
 
         let t1 = Instant::now();
-        match crate::eval::eval(tree, &mut jit) {
+        match crate::eval::eval(tree) {
             Ok(v) => println!(": {:?}", v),
             Err(e) => {
                 provide_diagnostic(&e, src);

@@ -42,6 +42,7 @@ pub enum EvalError {
     Undefined(String, Span),
     ArityMismatch,
     InvalidSignature(String),
+    UnexpectedAtom(Span, String),
 }
 
 impl Display for EvalError {
@@ -51,6 +52,7 @@ impl Display for EvalError {
             EvalError::Undefined(_, _) => write!(f, "Undefined"),
             EvalError::ArityMismatch => write!(f, "ArityMismatch"),
             EvalError::InvalidSignature(_) => write!(f, "InvalidSignature"),
+            EvalError::UnexpectedAtom(_, _) => write!(f, "UnexpectedAtom"),
         }
     }
 }
@@ -65,6 +67,7 @@ impl Spans for &EvalError {
             EvalError::Undefined(msg, span) => vec![(*span, msg.clone())],
             EvalError::ArityMismatch => panic!("arity mismatch"),
             EvalError::InvalidSignature(_) => todo!(),
+            EvalError::UnexpectedAtom(span, msg) => vec![(*span, msg.clone())],
         }
     }
 }
@@ -88,6 +91,7 @@ pub enum SyntaxErrorKind {
     InvalidLiteral,
     UnexpectedToken,
     UnexpectedExpression,
+    UnexpectedRParen,
 
     FunctionHasNoBody,
     FunctionHasNoArglist,
