@@ -252,11 +252,11 @@ impl CLString {
         let mut replaced = self.clone();
         for value in values {
             let pat = match value.tag {
+                Tag::FRef => todo!(),
                 Tag::Error => "%e",
                 Tag::Null => "%0",
                 Tag::Int => "%d",
                 Tag::Float => "%f",
-                Tag::Ptr => "%p",
                 Tag::Pair => "%t",
                 Tag::Func => "%p",
                 Tag::Symbol => "%y",

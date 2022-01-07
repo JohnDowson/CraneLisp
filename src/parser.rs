@@ -1,8 +1,8 @@
 use crate::function::Type;
 use crate::lexer::{Lexer, Token};
-use crate::value::{cons, Atom, Symbol};
+use crate::value::{append, cons, Atom};
 use crate::{intern, CranelispError, Result, Span};
-use somok::{Leaksome, Somok};
+use somok::Somok;
 pub type Arglist = Vec<(String, Type)>;
 
 pub struct Parser<'l> {
@@ -35,16 +35,7 @@ impl<'l> Parser<'l> {
             }
             token @ Token::Quote(..) => {
                 let (atom, span) = self.parse_list(token)?;
-                (
-                    cons(
-                        Atom::new_symbol(Symbol::new("quote").boxed())
-                            .boxed()
-                            .leak(),
-                        atom.boxed().leak(),
-                    ),
-                    span,
-                )
-                    .okay()
+                (atom, span).okay()
             }
 
             Token::Symbol(sym, span) => {
@@ -77,13 +68,8 @@ impl<'l> Parser<'l> {
     }
 
     fn parse_list(&mut self, first_token: Token) -> Result<(Atom, Span)> {
-        let (mut atom, _) = match self.parse_expr() {
-            Ok((val, span)) => (
-                cons(val.boxed().leak(), Atom::NULL.boxed().leak())
-                    .boxed()
-                    .leak(),
-                span,
-            ),
+        let (mut head, _) = match self.parse_expr() {
+            Ok((val, span)) => (cons(val.boxed(), Atom::NULL.boxed()), span),
             Err(e) => match e {
                 CranelispError::Syntax(se) => match se.kind {
                     crate::SyntaxErrorKind::UnexpectedRParen => {
@@ -98,7 +84,7 @@ impl<'l> Parser<'l> {
                 _ => return e.error(),
             },
         };
-        let head = atom as *mut Atom;
+        let atom = &mut head;
         loop {
             match self.lexer.peek_token()? {
                 token if token.is_whitespace() => {
@@ -106,11 +92,7 @@ impl<'l> Parser<'l> {
                 }
                 token if token.is_rparen() => {
                     self.lexer.next_token()?;
-                    return (
-                        unsafe { *head },
-                        Span::merge(first_token.span(), token.span()),
-                    )
-                        .okay();
+                    return (head, Span::merge(first_token.span(), token.span())).okay();
                 }
                 token if token.is_eof() => {
                     return syntax!(
@@ -122,11 +104,7 @@ impl<'l> Parser<'l> {
                 }
                 _ => {
                     let (next_atom, _) = self.parse_expr()?;
-                    let next_atom = cons(next_atom.boxed().leak(), Atom::NULL.boxed().leak())
-                        .boxed()
-                        .leak();
-                    unsafe { (*atom.as_pair()).cdr = next_atom };
-                    atom = next_atom
+                    *atom = append(atom.clone(), next_atom)
                 }
             };
         }

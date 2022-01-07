@@ -24,7 +24,7 @@ impl Func {
             .map(|a| a.boxed().leak() as *mut Atom)
             .collect::<Vec<*mut Atom>>();
         let (count, args) = (args.len(), args.leak().as_mut_ptr());
-        unsafe { *(self.body)(count, args) }
+        unsafe { (&*(self.body)(count, args)).clone() }
     }
 }
 

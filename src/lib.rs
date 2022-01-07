@@ -1,3 +1,4 @@
+#![feature(box_into_inner)]
 #[macro_export]
 macro_rules! syntax {
     ($kind:tt, $($spans:expr),+) => {
@@ -35,7 +36,7 @@ use std::{cell::RefCell, collections::BTreeSet};
 pub use errors::*;
 use once_cell::unsync::Lazy;
 use smol_str::SmolStr;
-use somok::{Leaksome, Somok};
+use somok::Somok;
 use value::{Atom, Symbol};
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
 
@@ -62,7 +63,7 @@ pub fn dump_env() {
 pub fn intern(sym: SmolStr) -> Symbol {
     let sym = Symbol {
         name: sym,
-        val: Atom::NULL.boxed().leak(),
+        val: Atom::NULL.boxed(),
     };
     unsafe {
         if let Some(sym) = ENV.borrow().get(&sym) {
@@ -84,14 +85,14 @@ pub fn set_value(sym: Symbol) {
     }
 }
 
-pub fn lookup_value(sym: SmolStr) -> Option<*mut Atom> {
+pub fn lookup_value<'a>(sym: SmolStr) -> Option<&'a Atom> {
     unsafe {
         ENV.get_mut()
             .get(&Symbol {
                 name: sym,
-                val: Atom::NULL.boxed().leak(),
+                val: Atom::NULL.boxed(),
             })
-            .map(|s| s.val)
+            .map(|s| s.val.as_ref())
     }
 }
 trait TryRemove {
@@ -182,7 +183,7 @@ pub mod libcl {
         }
         match (**atoms).tag {
             Tag::Null => *atoms,
-            Tag::Pair => value::car(*atoms),
+            Tag::Pair => value::pcar(*atoms),
             _ => todo!(),
         }
     }
@@ -194,7 +195,7 @@ pub mod libcl {
         }
         match (**atoms).tag {
             Tag::Null => *atoms,
-            Tag::Pair => value::cdr(*atoms),
+            Tag::Pair => value::pcdr(*atoms),
             _ => todo!(),
         }
     }
@@ -205,17 +206,19 @@ pub mod libcl {
         }
         let (a, b) = (*atoms, *atoms.add(1));
 
-        crate::value::cons(a, b).boxed().leak()
+        crate::value::cons(Box::from_raw(a), Box::from_raw(b))
+            .boxed()
+            .leak()
     }
 
     pub unsafe extern "C" fn setf(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
         if count != 2 {
             return Atom::new_error(Arity).boxed().leak();
         }
-        let (place, new) = (*atoms, **atoms.add(1));
-        *place = new;
+        let (place, new) = (*atoms, (&**atoms.add(1)));
+        *place = new.clone();
 
-        new.boxed().leak()
+        new.clone().boxed().leak()
     }
 
     #[no_mangle]
@@ -241,7 +244,7 @@ pub mod libcl {
         if count < 1 {
             return Atom::new_error(Arity).boxed().leak();
         }
-        let a = **atoms;
+        let a = &**atoms;
         match a.tag {
             Tag::String => {
                 let fd = OpenOptions::new()
@@ -262,7 +265,7 @@ pub mod libcl {
         if count < 1 {
             return Atom::new_error(Arity).boxed().leak();
         }
-        let a = **atoms;
+        let a = &**atoms;
         match a.tag {
             Tag::Port => {
                 File::from_raw_fd(a.as_port());
@@ -277,7 +280,7 @@ pub mod libcl {
         if count < 1 {
             return Atom::new_error(Arity).boxed().leak();
         }
-        let a = **atoms;
+        let a = &**atoms;
         match a.tag {
             Tag::Port => {
                 let file = File::from_raw_fd(a.as_port());
@@ -299,10 +302,10 @@ pub mod libcl {
             return Atom::new_error(Arity).boxed().leak();
         }
 
-        let mut a = **atoms;
+        let mut a = (&**atoms).clone();
 
         for i in 1..count {
-            let b = **(atoms.add(i));
+            let b = &**(atoms.add(i));
             a = match (a.tag, b.tag) {
                 (Tag::Int, Tag::Int) => Atom::new_int(a.as_int() + b.as_int()),
                 (Tag::Int, Tag::Float) => Atom::new_int(a.as_int() + b.as_float() as i64),
@@ -320,10 +323,10 @@ pub mod libcl {
             return Atom::new_error(Arity).boxed().leak();
         }
 
-        let mut a = **atoms;
+        let mut a = (&**atoms).clone();
 
         for i in 1..count {
-            let b = **atoms.add(i);
+            let b = &**atoms.add(i);
             a = match (a.tag, b.tag) {
                 (Tag::Int, Tag::Int) => Atom::new_int(a.as_int() - b.as_int()),
                 (Tag::Int, Tag::Float) => Atom::new_int(a.as_int() - b.as_float() as i64),
@@ -341,10 +344,10 @@ pub mod libcl {
             return Atom::new_error(Arity).boxed().leak();
         }
 
-        let mut a = **atoms;
+        let mut a = (&**atoms).clone();
 
         for i in 1..count {
-            let b = **atoms.add(i);
+            let b = &**atoms.add(i);
             a = match (a.tag, b.tag) {
                 (Tag::Int, Tag::Int) => Atom::new_bool(a.as_int() < b.as_int()),
                 (Tag::Int, Tag::Float) => Atom::new_bool(a.as_int() < b.as_float() as i64),
@@ -361,10 +364,10 @@ pub mod libcl {
         if count < 2 {
             return Atom::new_error(Arity).boxed().leak();
         }
-        let mut a = **atoms;
+        let mut a = (&**atoms).clone();
 
         for i in 1..count {
-            let b = **atoms.add(i);
+            let b = &**atoms.add(i);
             a = match (a.tag, b.tag) {
                 (Tag::Int, Tag::Int) => Atom::new_bool(a.as_int() > b.as_int()),
                 (Tag::Int, Tag::Float) => Atom::new_bool(a.as_int() > b.as_float() as i64),
