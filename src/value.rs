@@ -1,4 +1,4 @@
-use crate::function::Func;
+use crate::{function::Func, mem};
 use somok::Somok;
 use std::{
     fmt::{Debug, Display},
@@ -26,7 +26,7 @@ impl Clone for Atom {
                 tag: self.tag,
                 value: match self.tag {
                     Tag::FRef => Value {
-                        FRef: self.value.FRef,
+                        FRef: self.value.FRef.clone(),
                     },
                     Tag::Error => Value {
                         Error: self.value.Error,
@@ -64,7 +64,7 @@ impl Clone for Atom {
 
 #[allow(non_snake_case)]
 pub union Value {
-    pub FRef: usize,
+    pub FRef: ManuallyDrop<mem::Ref>,
     pub Error: u64,
     pub Null: u8,
     pub Int: i64,
@@ -167,9 +167,9 @@ impl Atom {
             value: Value { Error: fref as u64 },
         }
     }
-    pub fn as_fref(&self) -> usize {
+    pub fn as_fref(&self) -> mem::Ref {
         match self.tag {
-            Tag::FRef => unsafe { self.value.FRef },
+            Tag::FRef => unsafe { (&*self.value.FRef).clone() },
             _ => todo!(),
         }
     }
@@ -348,7 +348,6 @@ impl Atom {
 impl Drop for Atom {
     fn drop(&mut self) {
         match self.tag {
-            Tag::FRef => todo!(),
             Tag::Pair => unsafe { ManuallyDrop::drop(&mut self.value.Pair) },
             Tag::Func => unsafe { ManuallyDrop::drop(&mut self.value.Func) },
             Tag::Symbol => unsafe { ManuallyDrop::drop(&mut self.value.Symbol) },
@@ -364,7 +363,7 @@ impl Debug for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?} ", self.tag)?;
         match self.tag {
-            Tag::FRef => todo!(),
+            Tag::FRef => write!(f, "{:?}", unsafe { &*self.value.FRef }),
             Tag::Error => write!(f, "{:?}", self.as_error()),
             Tag::Null => ().okay(),
             Tag::Int => write!(f, "{:?}", self.as_int()),
@@ -401,7 +400,7 @@ impl Display for Atom {
     }
 }
 
-#[repr(i64)]
+#[repr(i32)]
 #[derive(Clone, Copy)]
 pub enum Tag {
     FRef = -2,

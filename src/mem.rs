@@ -1,10 +1,16 @@
-use crate::value::Atom;
+use crate::value::{scar, scdr, Atom};
 use once_cell::unsync::Lazy;
 use somok::Somok;
 use std::cell::RefCell;
 
 static mut STACK: Lazy<RefCell<Stack>> = Lazy::new(|| RefCell::new(Stack::default()));
 static mut HEAP: Lazy<RefCell<Heap>> = Lazy::new(|| RefCell::new(Heap::default()));
+
+pub fn debug() {
+    unsafe {
+        println!("{:?}\n{:?}", STACK.borrow(), HEAP.borrow());
+    }
+}
 
 pub fn push(a: Atom) {
     unsafe {
@@ -17,8 +23,8 @@ pub fn pop(a: Atom) {
     }
 }
 
-pub fn alloc() -> Ref {
-    unsafe { HEAP.get_mut().alloc() }
+pub fn alloc(atom: Atom) -> Ref {
+    unsafe { HEAP.get_mut().alloc(atom) }
 }
 pub fn drop(rf: Ref) {
     unsafe {
@@ -26,8 +32,39 @@ pub fn drop(rf: Ref) {
     }
 }
 
-pub struct Ref(u64);
+pub fn collect() {
+    for atom in unsafe { STACK.borrow() }.iter() {
+        mark(atom)
+    }
+}
 
+fn mark(atom: &Atom) {
+    match atom.tag {
+        crate::value::Tag::Pair => {
+            mark(scar(atom));
+            mark(scdr(atom));
+        }
+        crate::value::Tag::Return => unsafe {
+            mark(atom.value.Return.as_ref());
+        },
+        _ => (),
+    }
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[repr(C)]
+pub struct Ref(usize);
+
+impl Ref {
+    pub fn deref(self) -> Atom {
+        unsafe { HEAP.borrow().get(self) }
+    }
+
+    pub fn as_usize(&self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Debug)]
 pub struct Stack {
     inner: Vec<Atom>,
 }
@@ -60,8 +97,9 @@ impl Stack {
     }
 }
 
+#[derive(Debug)]
 pub struct Heap {
-    inner: Vec<Atom>,
+    inner: Vec<(Atom, bool)>,
     fref_head: Option<usize>,
 }
 
@@ -73,29 +111,41 @@ impl Heap {
         }
     }
 
-    pub fn alloc(&mut self) -> Ref {
+    pub fn alloc(&mut self, atom: Atom) -> Ref {
         if let Some(head) = self.fref_head {
-            if self.inner[head].as_fref() != 0 {
-                self.fref_head = self.inner[head].as_fref().some()
+            if self.inner[head].0.as_fref().as_usize() != 0 {
+                self.fref_head = self.inner[head].0.as_fref().as_usize().some()
             } else {
                 self.fref_head = None
             }
-            self.inner[head] = Atom::NULL;
+            self.inner[head] = (atom, false);
 
-            Ref(head as u64)
+            Ref(head)
         } else {
-            self.inner.push(Atom::NULL);
-            Ref(self.inner.len() as u64)
+            self.inner.push((atom, false));
+            Ref(self.inner.len() - 1)
         }
     }
 
     pub fn drop(&mut self, rf: Ref) {
         if let Some(head) = self.fref_head {
-            self.inner[rf.0 as usize] = Atom::new_fref(head);
+            self.inner[rf.0 as usize] = (Atom::new_fref(head), false);
         } else {
-            self.inner[rf.0 as usize] = Atom::new_fref(0);
+            self.inner[rf.0 as usize] = (Atom::new_fref(0), false);
             self.fref_head = Some(rf.0 as usize);
         }
+    }
+
+    pub fn get(&self, rf: Ref) -> Atom {
+        self.inner
+            .get(rf.as_usize())
+            .cloned()
+            .expect("Invalid ref")
+            .0
+    }
+
+    pub fn mark(&mut self, rf: Ref) {
+        self.inner.get_mut(rf.as_usize()).expect("Invalid ref").1 = true
     }
 }
 
