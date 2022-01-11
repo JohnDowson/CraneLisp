@@ -1,9 +1,10 @@
 use somok::Somok;
 
 use crate::{
+    env::{get_env, Env, EnvId},
     mem,
     value::{collect, Atom, SymId},
-    CranelispError, Env, Result, Span,
+    CranelispError, Result, Span,
 };
 use std::{fmt::Debug, str::FromStr};
 
@@ -26,13 +27,13 @@ impl Func {
     //     Self::Native(body).okay()
     // }
 
-    pub fn call(&self, args: mem::Ref, env: &mut Env) -> Atom {
+    pub fn call(&self, args: mem::Ref, env: EnvId) -> Atom {
         match self {
-            Func::Native(body) => (body)(args, env),
+            Func::Native(body) => (body)(args, get_env(env)),
             Func::Interp { params, body } => {
                 let args = collect(args);
                 for (arg, sym) in args.into_iter().zip(params.iter()) {
-                    env.insert(*sym, arg)
+                    get_env(env).insert(*sym, arg)
                 }
                 crate::eval::eval((body.clone(), Span::new(0, 0)), env).unwrap()
             }

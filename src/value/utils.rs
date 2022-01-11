@@ -14,7 +14,7 @@ pub fn collect(atom: mem::Ref) -> Vec<Atom> {
     atoms
 }
 
-pub fn map_to_vec<T>(atom: mem::Ref, op: impl Fn(&Atom) -> T) -> Vec<T> {
+pub fn map_to_vec<T>(atom: mem::Ref, mut op: impl FnMut(&Atom) -> T) -> Vec<T> {
     let mut atoms = Vec::new();
     let mut next = atom;
     while let Some(pair) = next.as_pair() {
@@ -24,7 +24,7 @@ pub fn map_to_vec<T>(atom: mem::Ref, op: impl Fn(&Atom) -> T) -> Vec<T> {
     atoms
 }
 
-pub fn map(atom: mem::Ref, op: impl Fn(Atom) -> Atom) -> Atom {
+pub fn map(atom: mem::Ref, mut op: impl FnMut(Atom) -> Atom) -> Atom {
     let mut next = atom.clone();
     while let Some(pair) = next.as_pair_mut() {
         *pair.car.deref_mut() = op(pair.car.deref().clone());

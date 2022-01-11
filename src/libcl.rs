@@ -1,9 +1,9 @@
 use std::ops::Deref;
 
 use crate::{
+    env::Env,
     mem,
     value::{Atom, ErrorCode},
-    Env,
 };
 
 pub fn add(atom: mem::Ref, _env: &mut Env) -> Atom {

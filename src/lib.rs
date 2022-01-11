@@ -29,6 +29,7 @@ pub mod errors;
 pub mod eval;
 pub mod function;
 // pub mod jit;
+pub mod env;
 pub mod lexer;
 pub mod libcl;
 pub mod mem;
@@ -36,93 +37,11 @@ pub mod parser;
 pub mod value;
 
 pub use errors::*;
-use fnv::{FnvBuildHasher, FnvHashMap};
-use function::Func;
+use fnv::FnvBuildHasher;
 use indexmap::IndexSet;
-use somok::{Leaksome, Somok};
-use std::ops::{Index, IndexMut};
-use value::{intern, Atom, SymId};
 
 pub type FnvIndexSet<T> = IndexSet<T, FnvBuildHasher>;
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
-#[derive(Debug)]
-pub struct Env<'a> {
-    parent: Option<&'a mut Env<'a>>,
-    inner: FnvHashMap<SymId, Atom>,
-}
-
-impl<'this> Env<'this> {
-    pub fn insert(&mut self, sym: SymId, atom: Atom) {
-        self.inner.insert(sym, atom);
-    }
-
-    pub fn try_get(&self, index: SymId) -> Option<&Atom> {
-        self.inner.get(&index).or_else(|| {
-            if let Some(parent) = &self.parent {
-                parent.try_get(index)
-            } else {
-                None
-            }
-        })
-    }
-
-    pub fn try_get_mut(&mut self, index: SymId) -> Option<&mut Atom> {
-        self.inner.get_mut(&index).or_else(|| {
-            if let Some(parent) = &mut self.parent {
-                parent.try_get_mut(index)
-            } else {
-                None
-            }
-        })
-    }
-
-    pub fn fork(&'this mut self) -> Env<'this> {
-        Env::<'this> {
-            parent: Some(self),
-            inner: Default::default(),
-        }
-    }
-}
-impl<'a> Index<SymId> for Env<'a> {
-    type Output = Atom;
-
-    fn index(&self, index: SymId) -> &Self::Output {
-        self.inner.get(&index).unwrap_or_else(|| {
-            if let Some(parent) = self.parent {
-                &parent[index]
-            } else {
-                panic!("Symbol not found")
-            }
-        })
-    }
-}
-impl<'a> IndexMut<SymId> for Env<'a> {
-    fn index_mut(&mut self, index: SymId) -> &mut Self::Output {
-        self.inner.get_mut(&index).unwrap_or_else(|| {
-            if let Some(parent) = &mut self.parent {
-                &mut parent[index]
-            } else {
-                panic!("Symbol not found")
-            }
-        })
-    }
-}
-
-pub fn setup<'a>() -> Env<'a> {
-    let mut env = Env {
-        parent: None,
-        inner: Default::default(),
-    };
-    env.insert(
-        intern("+"),
-        Atom::Func(Func::from_fn(libcl::add).boxed().leak()),
-    );
-    env.insert(
-        intern("-"),
-        Atom::Func(Func::from_fn(libcl::sub).boxed().leak()),
-    );
-    env
-}
 
 #[derive(Clone, Copy)]
 pub struct Span {

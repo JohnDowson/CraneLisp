@@ -1,16 +1,15 @@
-use std::ops::Deref;
-
-use somok::{Leaksome, Somok};
-
 use crate::{
+    env::{fork_env, get_env, unfork_env, EnvId},
     errors,
     function::Func,
     mem,
     value::{map, map_to_vec, Atom, SymId},
-    CranelispError, Env, EvalError, Result, Span,
+    CranelispError, EvalError, Result, Span,
 };
+use somok::{Leaksome, Somok};
+use std::ops::Deref;
 
-pub fn eval<'a, 'b>((atom, span): (Atom, Span), env: &'a mut Env<'b>) -> Result<Atom> {
+pub fn eval((atom, span): (Atom, Span), env: EnvId) -> Result<Atom> {
     match atom {
         Atom::FRef(_) => unreachable!(),
         Atom::Error(_) => todo!(),
@@ -51,10 +50,59 @@ pub fn eval<'a, 'b>((atom, span): (Atom, Span), env: &'a mut Env<'b>) -> Result<
                         let sym = p.cdr.as_pair().unwrap().car.as_symbol().unwrap();
                         let atom = p.cdr.as_pair().unwrap().cdr.as_pair().unwrap().car.deref();
                         let atom = eval((atom.clone(), span), env)?;
-                        env.insert(*sym, atom.clone());
+                        get_env(env).insert(*sym, atom.clone());
                         return atom.okay();
                     }
-                    _ => env
+                    "progn" => {
+                        return map_to_vec(p.cdr, |a| eval((a.clone(), span), env))
+                            .into_iter()
+                            .collect::<Result<Vec<Atom>>>()?
+                            .pop()
+                            .unwrap_or(Atom::Null)
+                            .okay();
+                    }
+                    "if" => {
+                        return if !matches!(
+                            eval((p.cdr.as_pair().unwrap().car.deref().clone(), span), env)?,
+                            Atom::Null,
+                        ) {
+                            eval(
+                                (
+                                    p.cdr
+                                        .as_pair()
+                                        .unwrap()
+                                        .cdr
+                                        .as_pair()
+                                        .unwrap()
+                                        .car
+                                        .deref()
+                                        .clone(),
+                                    span,
+                                ),
+                                env,
+                            )
+                        } else {
+                            eval(
+                                (
+                                    p.cdr
+                                        .as_pair()
+                                        .unwrap()
+                                        .cdr
+                                        .as_pair()
+                                        .unwrap()
+                                        .cdr
+                                        .as_pair()
+                                        .unwrap()
+                                        .car
+                                        .deref()
+                                        .clone(),
+                                    span,
+                                ),
+                                env,
+                            )
+                        }
+                    }
+                    _ => get_env(env)
                         .try_get(*s)
                         .ok_or_else(|| {
                             errors::CranelispError::Eval(EvalError::Undefined(
@@ -72,12 +120,13 @@ pub fn eval<'a, 'b>((atom, span): (Atom, Span), env: &'a mut Env<'b>) -> Result<
                 }
             };
             let args = map(p.cdr, |a| eval((a, span), env).unwrap());
-            let mut subenv: Env<'_> = env.fork();
-            let res = func.as_func().unwrap().call(mem::alloc(args), &mut subenv);
+            let subenv = fork_env(env);
+            let res = func.as_func().unwrap().call(mem::alloc(args), subenv);
+            unfork_env(subenv);
             res.okay()
         }
         Atom::Return(_) => todo!(),
-        Atom::Symbol(s) => env
+        Atom::Symbol(s) => get_env(env)
             .try_get(s)
             .ok_or_else(|| {
                 errors::CranelispError::Eval(EvalError::Undefined(
