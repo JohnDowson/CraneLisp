@@ -11,7 +11,6 @@ pub enum Token {
     Symbol(SmolStr, Span),
     String(String, Span),
     Quote(Span),
-    TypeSeparator(Span),
     Eof(Span),
     Whitespace(Span),
 }
@@ -26,7 +25,6 @@ impl Debug for Token {
             Self::Symbol(sym, ..) => write!(f, "{:?}", sym),
             Self::String(str, ..) => write!(f, "\"{:?}\"", str),
             Self::Quote(..) => write!(f, "'"),
-            Self::TypeSeparator(..) => write!(f, ":"),
             Self::Eof(..) => write!(f, "Eof"),
             Self::Whitespace(..) => write!(f, " "),
         }
@@ -43,7 +41,6 @@ impl Token {
             Token::Symbol(_, span) => span,
             Token::String(_, span) => span,
             Token::Quote(span) => span,
-            Token::TypeSeparator(span) => span,
             Token::Eof(span) => span,
             Token::Whitespace(span) => span,
         }
@@ -127,13 +124,6 @@ impl Token {
     /// [`Quote`]: Token::Quote
     pub fn is_quote(&self) -> bool {
         matches!(self, Self::Quote(..))
-    }
-
-    /// Returns `true` if the token is [`TypeSeparator`].
-    ///
-    /// [`TypeSeparator`]: Token::TypeSeparator
-    pub fn is_type_separator(&self) -> bool {
-        matches!(self, Self::TypeSeparator(..))
     }
 
     /// Returns `true` if the token is [`Eof`].

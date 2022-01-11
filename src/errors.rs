@@ -23,10 +23,6 @@ pub enum CranelispError {
     ReplIO(#[from] rustyline::error::ReadlineError),
     #[error("")]
     Eval(EvalError),
-    #[error("Jit error: {0}")]
-    JIT(#[from] cranelift_module::ModuleError),
-    #[error("Jit error: {0}")]
-    Optimizer(#[from] cranelift::codegen::CodegenError),
 }
 
 pub fn syntax<T>(error: SyntaxError) -> Result<T> {

@@ -124,11 +124,6 @@ impl Lexer {
         let start = self.next;
         let symbol = self.consume_until(|c| c.is_whitespace() || ['(', ')'].contains(&c));
         let end = self.next;
-        // trace!(
-        //     "Consuming Symbol: {:?} at location {:?}",
-        //     symbol,
-        //     start..end
-        // );
         Ok(Token::Symbol(symbol.into(), Span::new(start, end)))
     }
 
@@ -157,10 +152,6 @@ impl Lexer {
                     self.consume_until(|c| c == '\n');
                     self.next_token()
                 }
-                ':' => {
-                    self.consume();
-                    Token::TypeSeparator(Span::point(self.next - 1)).okay()
-                }
                 '"' => {
                     let start = self.next;
                     self.consume();
@@ -170,12 +161,10 @@ impl Lexer {
                     Token::String(string, Span::new(start, end)).okay()
                 }
                 '(' => {
-                    //trace!("Consuming LParen at location {}", self.next);
                     self.consume();
                     Token::LParen(Span::point(self.next - 1)).okay()
                 }
                 ')' => {
-                    //trace!("Consuming RParen at location {}", self.next);
                     self.consume();
                     Token::RParen(Span::point(self.next - 1)).okay()
                 }

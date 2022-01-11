@@ -1,36 +1,53 @@
-use somok::{Leaksome, Somok};
+use somok::Somok;
 
-use crate::{value::Atom, CranelispError, Result};
+use crate::{
+    mem,
+    value::{collect, Atom, SymId},
+    CranelispError, Env, Result, Span,
+};
 use std::{fmt::Debug, str::FromStr};
 
-#[derive(Clone, Copy)]
-#[repr(transparent)]
-pub struct Func {
-    pub body: unsafe extern "C" fn(usize, *mut *mut Atom) -> *mut Atom,
+pub enum Func {
+    Native(fn(mem::Ref, &mut Env) -> Atom),
+    Interp { params: Vec<SymId>, body: Atom },
 }
 
 impl Func {
-    pub fn from_fn(body: unsafe extern "C" fn(usize, *mut *mut Atom) -> *mut Atom) -> Self {
-        Self { body }
+    pub fn from_fn(body: fn(mem::Ref, &mut Env) -> Atom) -> Self {
+        Self::Native(body)
     }
+
+    pub fn interp(params: Vec<SymId>, body: Atom) -> Self {
+        Self::Interp { params, body }
+    }
+
     // pub fn jit(jit: &mut Jit, defun: Atom) -> Result<Self> {
-    //     let body = unsafe { std::mem::transmute::<_, _>(jit.compile(todo!(), defun)?) };
-    //     Self { body }.okay()
+    //     let body = unsafe { std::mem::transmute::<_, _>(jit.compile("Fubar".into(), defun)?) };
+    //     Self::Native(body).okay()
     // }
 
-    pub fn call(&self, args: Vec<Atom>) -> Atom {
-        let args = args
-            .into_iter()
-            .map(|a| a.boxed().leak() as *mut Atom)
-            .collect::<Vec<*mut Atom>>();
-        let (count, args) = (args.len(), args.leak().as_mut_ptr());
-        unsafe { (&*(self.body)(count, args)).clone() }
+    pub fn call(&self, args: mem::Ref, env: &mut Env) -> Atom {
+        match self {
+            Func::Native(body) => (body)(args, env),
+            Func::Interp { params, body } => {
+                let args = collect(args);
+                for (arg, sym) in args.into_iter().zip(params.iter()) {
+                    env.insert(*sym, arg)
+                }
+                crate::eval::eval((body.clone(), Span::new(0, 0)), env).unwrap()
+            }
+        }
     }
 }
 
 impl Debug for Func {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{ body: {:?} }}", self.body as *const u8)
+        match self {
+            Func::Native(body) => write!(f, "{{ body: {:?} }}", *body as *const u8),
+            Func::Interp { params, body } => {
+                write!(f, "{{ params: {:?} body: {:?} }}", params, body)
+            }
+        }
     }
 }
 

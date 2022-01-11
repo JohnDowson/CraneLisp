@@ -1,88 +1,93 @@
-use crate::{
-    // jit::Jit,
-    lookup_value,
-    set_value,
-    value::{car, cdr, map_to_vec, scar, scdr, Atom, Symbol, Tag},
-    CranelispError,
-    EvalError,
-    Result,
-    Span,
-};
-use somok::Somok;
+use std::ops::Deref;
 
-pub fn eval((atom, span): (Atom, Span)) -> Result<Atom> {
-    match atom.tag {
-        Tag::Symbol => {
-            let s = atom.as_symbol();
-            (lookup_value(s.name.clone()).cloned().ok_or_else(|| {
-                eprintln!("Undefined in eval translation");
-                CranelispError::Eval(EvalError::Undefined(s.name.clone().into(), span))
-            })?)
-            .okay()
-        }
-        Tag::Pair => {
-            let maybe_symbol = car(atom.clone());
-            let fun = match maybe_symbol.tag {
-                Tag::Error => unreachable!(),
-                Tag::Func => atom.clone(),
-                Tag::Symbol => {
-                    let sym = &*maybe_symbol.as_symbol().name;
-                    let sym_value: Atom = *maybe_symbol.as_symbol().val.clone();
-                    match sym {
-                        "let" => {
-                            let sym = scar(scdr(&atom)).as_symbol().name.clone();
-                            let val = eval((car(cdr(cdr(atom))), span))?;
-                            set_value(Symbol::new_with_atom(sym, val.clone()));
-                            return val.okay();
-                        }
-                        "if" => {
-                            let cond = eval((car(cdr(atom.clone())), span))?;
-                            if cond.as_bool() {
-                                let truth = car(cdr(cdr(atom)));
-                                return eval((truth, span));
-                            } else {
-                                let lie = car(cdr(cdr(cdr(atom))));
-                                return eval((lie, span));
-                            }
-                        }
-                        _ => match sym_value.tag {
-                            Tag::Func => sym_value,
-                            _ => {
-                                return CranelispError::Eval(EvalError::UnexpectedAtom(
-                                    span,
-                                    format!("Unexpected atom: {}", sym_value),
-                                ))
-                                .error();
-                            }
-                        },
+use somok::{Leaksome, Somok};
+
+use crate::{
+    errors,
+    function::Func,
+    mem,
+    value::{map, map_to_vec, Atom, SymId},
+    CranelispError, Env, EvalError, Result, Span,
+};
+
+pub fn eval<'a, 'b>((atom, span): (Atom, Span), env: &'a mut Env<'b>) -> Result<Atom> {
+    match atom {
+        Atom::FRef(_) => unreachable!(),
+        Atom::Error(_) => todo!(),
+        Atom::Pair(p) => {
+            let head = p.car.deref();
+            let func = match head {
+                Atom::Func(_) => todo!(),
+                Atom::Symbol(s) => match &**s {
+                    "fn" => {
+                        return Atom::Func(
+                            Func::interp(
+                                map_to_vec(p.cdr.as_pair().unwrap().car.clone(), |a| {
+                                    a.deref().as_symbol().cloned().ok_or_else(|| {
+                                        CranelispError::Eval(EvalError::UnexpectedAtom(
+                                            span,
+                                            "".into(),
+                                        ))
+                                    })
+                                })
+                                .into_iter()
+                                .collect::<Result<Vec<SymId>>>()?,
+                                p.cdr
+                                    .as_pair()
+                                    .unwrap()
+                                    .cdr
+                                    .as_pair()
+                                    .unwrap()
+                                    .car
+                                    .deref()
+                                    .clone(),
+                            )
+                            .boxed()
+                            .leak(),
+                        )
+                        .okay()
                     }
-                }
+                    "set" => {
+                        let sym = p.cdr.as_pair().unwrap().car.as_symbol().unwrap();
+                        let atom = p.cdr.as_pair().unwrap().cdr.as_pair().unwrap().car.deref();
+                        let atom = eval((atom.clone(), span), env)?;
+                        env.insert(*sym, atom.clone());
+                        return atom.okay();
+                    }
+                    _ => env
+                        .try_get(*s)
+                        .ok_or_else(|| {
+                            errors::CranelispError::Eval(EvalError::Undefined(
+                                format!("Undefined symbol: {:?}", s),
+                                span,
+                            ))
+                        })?
+                        .clone(),
+                },
                 _ => {
-                    return CranelispError::Eval(EvalError::UnexpectedAtom(
+                    return errors::eval(EvalError::UnexpectedAtom(
                         span,
-                        format!("Unexpected atom: {}", atom),
+                        format!("Unexpected atom {:?} where func expected", head),
                     ))
-                    .error();
                 }
             };
-            let values = map_to_vec(cdr(atom), |a| eval((a, span)).unwrap());
-            (*fun.as_func()).call(values).okay()
+            let args = map(p.cdr, |a| eval((a, span), env).unwrap());
+            let mut subenv: Env<'_> = env.fork();
+            let res = func.as_func().unwrap().call(mem::alloc(args), &mut subenv);
+            res.okay()
         }
+        Atom::Return(_) => todo!(),
+        Atom::Symbol(s) => env
+            .try_get(s)
+            .ok_or_else(|| {
+                errors::CranelispError::Eval(EvalError::Undefined(
+                    format!("Undefined symbol: {:?}", s),
+                    span,
+                ))
+            })?
+            .clone()
+            .okay(),
+        Atom::Quoted(i) => i.deref().clone().okay(),
         _ => atom.okay(),
-        // todo: Quoted, return, loop
-        // Expr::Return(expr, ..) => {
-        //     if let Some(e) = expr {
-        //         Atom::new_return(eval(*e, jit)?).okay()
-        //     } else {
-        //         Atom::new_return(Atom::NULL).okay()
-        //     }
-        // }
-        // Expr::Loop(body, ..) => {
-        //     let mut last_val = Atom::NULL;
-        //     while !matches!(last_val.tag, value::Tag::Return) {
-        //         last_val = eval(*body.clone(), jit)?;
-        //     }
-        //     unsafe { *last_val.as_ptr::<Atom>() }.okay()
-        // }
     }
 }

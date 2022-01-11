@@ -1,9 +1,9 @@
-use crate::function::Type;
+use std::ops::Deref;
+
 use crate::lexer::{Lexer, Token};
-use crate::value::{append, cons, Atom};
-use crate::{intern, CranelispError, Result, Span};
+use crate::value::{intern, Atom};
+use crate::{mem, CranelispError, Result, Span};
 use somok::Somok;
-pub type Arglist = Vec<(String, Type)>;
 
 pub struct Parser<'l> {
     lexer: &'l mut Lexer,
@@ -21,11 +21,11 @@ impl<'l> Parser<'l> {
             }
 
             Token::Float(f, span) => {
-                let expr = (Atom::new_float(f), span);
+                let expr = (Atom::Float(f), span);
                 expr.okay()
             }
             Token::Integer(i, span) => {
-                let expr = (Atom::new_int(i), span);
+                let expr = (Atom::Int(i), span);
                 expr.okay()
             }
 
@@ -33,21 +33,17 @@ impl<'l> Parser<'l> {
                 self.skip_whitespace()?;
                 self.parse_list(token)
             }
-            token @ Token::Quote(..) => {
-                let (atom, span) = self.parse_list(token)?;
-                (atom, span).okay()
+            Token::Quote(..) => {
+                let (atom, span) = self.parse_expr()?;
+                (Atom::Quoted(mem::alloc(atom)), span).okay()
             }
 
             Token::Symbol(sym, span) => {
                 let sym = intern(sym);
-                (Atom::new_symbol(sym.boxed()), span).okay()
+                (Atom::Symbol(sym), span).okay()
             }
 
-            Token::String(string, span) => (Atom::new_string(string.into()), span).okay(),
-
-            Token::TypeSeparator(span) => {
-                syntax!(UnexpectedToken, (span, "Unexpected type separator".into())).error()
-            }
+            Token::String(string, span) => (Atom::String(string), span).okay(),
 
             Token::Whitespace(..) => self.parse_expr(),
 
@@ -68,13 +64,13 @@ impl<'l> Parser<'l> {
     }
 
     fn parse_list(&mut self, first_token: Token) -> Result<(Atom, Span)> {
-        let (mut head, _) = match self.parse_expr() {
-            Ok((val, span)) => (cons(val.boxed(), Atom::NULL.boxed()), span),
+        let head = match self.parse_expr() {
+            Ok((val, _)) => Atom::pair_alloc(val, Atom::Null),
             Err(e) => match e {
                 CranelispError::Syntax(se) => match se.kind {
                     crate::SyntaxErrorKind::UnexpectedRParen => {
                         return (
-                            Atom::NULL,
+                            Atom::Null,
                             Span::merge(first_token.span(), se.spans.last().unwrap().0),
                         )
                             .okay()
@@ -84,7 +80,8 @@ impl<'l> Parser<'l> {
                 _ => return e.error(),
             },
         };
-        let atom = &mut head;
+        let head = mem::alloc(head);
+        let mut atom = head.clone();
         loop {
             match self.lexer.peek_token()? {
                 token if token.is_whitespace() => {
@@ -92,7 +89,11 @@ impl<'l> Parser<'l> {
                 }
                 token if token.is_rparen() => {
                     self.lexer.next_token()?;
-                    return (head, Span::merge(first_token.span(), token.span())).okay();
+                    return (
+                        head.deref().clone(),
+                        Span::merge(first_token.span(), token.span()),
+                    )
+                        .okay();
                 }
                 token if token.is_eof() => {
                     return syntax!(
@@ -104,7 +105,9 @@ impl<'l> Parser<'l> {
                 }
                 _ => {
                     let (next_atom, _) = self.parse_expr()?;
-                    *atom = append(atom.clone(), next_atom)
+                    let next_pair = mem::alloc(Atom::pair_alloc(next_atom, Atom::Null));
+                    atom.as_pair_mut().unwrap().cdr = next_pair.clone();
+                    atom = next_pair;
                 }
             };
         }

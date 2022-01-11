@@ -1,452 +1,202 @@
 use crate::{function::Func, mem};
-use somok::Somok;
 use std::{
     fmt::{Debug, Display},
-    fs::File,
-    mem::ManuallyDrop,
-    os::unix::prelude::RawFd,
+    ops::Deref,
 };
 mod symbol;
+use once_cell::unsync::Lazy;
 pub use symbol::*;
-mod cl_string;
-pub use cl_string::CLString;
-pub use cl_string::CLVector;
-mod pair;
-pub use pair::*;
-#[repr(C)]
-pub struct Atom {
-    pub tag: Tag,
-    pub value: Value,
+mod utils;
+pub use utils::*;
+
+pub static mut NULL: Lazy<mem::Ref> = Lazy::new(|| mem::alloc(Atom::Null));
+
+pub struct Pair {
+    pub car: mem::Ref,
+    pub cdr: mem::Ref,
+}
+
+impl Debug for Pair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Pair")
+            .field(&self.car.clone().deref())
+            .field(&self.cdr.clone().deref())
+            .finish()
+    }
+}
+
+pub enum Atom {
+    FRef(usize),
+    Error(ErrorCode),
+    Null,
+    Int(i64),
+    Float(f64),
+    Pair(Pair),
+    Func(&'static Func),
+    Symbol(SymId),
+    String(String),
+    Return(mem::Ref),
+    Macro(&'static Func),
+    Quoted(mem::Ref),
 }
 
 impl Clone for Atom {
     fn clone(&self) -> Self {
-        unsafe {
-            Self {
-                tag: self.tag,
-                value: match self.tag {
-                    Tag::FRef => Value {
-                        FRef: self.value.FRef.clone(),
-                    },
-                    Tag::Error => Value {
-                        Error: self.value.Error,
-                    },
-                    Tag::Null => Value {
-                        Null: self.value.Null,
-                    },
-                    Tag::Int => Value {
-                        Int: self.value.Int,
-                    },
-                    Tag::Float => Value {
-                        Float: self.value.Float,
-                    },
-                    Tag::Pair => Value {
-                        Pair: self.value.Pair.clone(),
-                    },
-                    Tag::Func => Value {
-                        Func: self.value.Func.clone(),
-                    },
-                    Tag::Symbol => Value {
-                        Symbol: self.value.Symbol.clone(),
-                    },
-                    Tag::String => Value {
-                        String: self.value.String.clone(),
-                    },
-                    Tag::Return => Value {
-                        Return: self.value.Return.clone(),
-                    },
-                    Tag::Port => todo!(),
-                },
-            }
+        match self {
+            Atom::FRef(inner) => Self::FRef(*inner),
+            Atom::Error(inner) => Self::Error(*inner),
+            Atom::Null => Self::Null,
+            Atom::Int(inner) => Self::Int(*inner),
+            Atom::Float(inner) => Self::Float(*inner),
+            Atom::Pair(Pair { car, cdr }) => Self::Pair(Pair {
+                car: car.clone(),
+                cdr: cdr.clone(),
+            }),
+            Atom::Func(inner) => Self::Func(*inner),
+            Atom::Symbol(inner) => Self::Symbol(*inner),
+            Atom::String(inner) => Self::String(inner.clone()),
+            Atom::Return(inner) => Self::Return(inner.clone()),
+            Atom::Macro(inner) => Self::Macro(*inner),
+            Atom::Quoted(inner) => Self::Quoted(inner.clone()),
         }
     }
-}
-
-#[allow(non_snake_case)]
-pub union Value {
-    pub FRef: ManuallyDrop<mem::Ref>,
-    pub Error: u64,
-    pub Null: u8,
-    pub Int: i64,
-    pub Float: f64,
-    pub Pair: ManuallyDrop<Box<Pair>>,
-    pub Func: ManuallyDrop<Box<Func>>,
-    pub Symbol: ManuallyDrop<Box<Symbol>>,
-    pub String: ManuallyDrop<Box<CLString>>,
-    pub Return: ManuallyDrop<Box<Atom>>,
-    pub Port: ManuallyDrop<Box<File>>,
 }
 
 impl Atom {
-    pub const NULL: Self = Self {
-        tag: Tag::Null,
-        value: Value { Null: 0 },
-    };
-    pub const TRUE: Self = Self {
-        tag: Tag::Int,
-        value: Value { Int: 1 },
-    };
-    pub const FALSE: Self = Self::NULL;
+    pub const TRUE: Self = Self::Int(1);
+    pub const FALSE: Self = Self::Null;
 
-    pub fn new_int(value: i64) -> Self {
-        Self {
-            tag: Tag::Int,
-            value: Value { Int: value },
-        }
-    }
-    pub fn new_float(value: f64) -> Self {
-        Self {
-            tag: Tag::Float,
-            value: Value { Float: value },
-        }
-    }
-    pub fn new_pair(value: Box<Pair>) -> Self {
-        Self {
-            tag: Tag::Pair,
-            value: Value {
-                Pair: ManuallyDrop::new(value),
-            },
-        }
-    }
-    pub fn new_func(value: Func) -> Self {
-        Self {
-            tag: Tag::Func,
-            value: Value {
-                Func: ManuallyDrop::new(value.boxed()),
-            },
-        }
-    }
-    pub fn new_bool(value: bool) -> Self {
-        if value {
-            Self::TRUE
+    pub fn as_fref(&self) -> Option<usize> {
+        if let Self::FRef(v) = self {
+            Some(*v)
         } else {
-            Self::FALSE
-        }
-    }
-    pub fn new_string(value: CLString) -> Self {
-        Self {
-            tag: Tag::String,
-            value: Value {
-                String: ManuallyDrop::new(value.boxed()),
-            },
-        }
-    }
-    pub fn new_symbol(value: Box<Symbol>) -> Self {
-        Self {
-            tag: Tag::Symbol,
-            value: Value {
-                Symbol: ManuallyDrop::new(value),
-            },
-        }
-    }
-    pub fn new_return(value: Atom) -> Self {
-        Self {
-            tag: Tag::Return,
-            value: Value {
-                Return: ManuallyDrop::new(value.boxed()),
-            },
+            None
         }
     }
 
-    pub fn new_error(error_code: ErrorCode) -> Self {
-        Self {
-            tag: Tag::Error,
-            value: Value {
-                Error: error_code as u64,
-            },
+    pub fn as_error(&self) -> Option<&ErrorCode> {
+        if let Self::Error(v) = self {
+            Some(v)
+        } else {
+            None
         }
     }
 
-    pub fn new_port(_fd: RawFd) -> Self {
-        todo!()
+    /// Returns `true` if the atom is [`Null`].
+    ///
+    /// [`Null`]: Atom::Null
+    pub fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
     }
 
-    pub fn new_fref(fref: usize) -> Self {
-        Self {
-            tag: Tag::FRef,
-            value: Value { Error: fref as u64 },
-        }
-    }
-    pub fn as_fref(&self) -> mem::Ref {
-        match self.tag {
-            Tag::FRef => unsafe { (&*self.value.FRef).clone() },
-            _ => todo!(),
-        }
+    /// Returns `true` if the atom is [`Error`].
+    ///
+    /// [`Error`]: Atom::Error
+    pub fn is_error(&self) -> bool {
+        matches!(self, Self::Error(..))
     }
 
-    pub fn as_int(&self) -> i64 {
-        unsafe {
-            match self.tag {
-                Tag::FRef => todo!(),
-                Tag::Error => todo!(),
-                Tag::Null => 0,
-                Tag::Int => self.value.Int,
-                Tag::Float => self.value.Float as _,
-                Tag::Pair => panic!("Can't cast Pair to Int"),
-                Tag::Func => panic!("Can't cast Func to Int"),
-                Tag::String => todo!(),
-                Tag::Return => todo!(),
-                Tag::Symbol => todo!(),
-                Tag::Port => todo!(),
-            }
+    pub fn as_int(&self) -> Option<i64> {
+        if let Self::Int(v) = self {
+            Some(*v)
+        } else {
+            None
         }
     }
 
-    pub fn as_float(&self) -> f64 {
-        match self.tag {
-            Tag::FRef => todo!(),
-            Tag::Error => todo!(),
-            Tag::Null => panic!("Can't cast Null to Float"),
-            Tag::Int => panic!("Can't cast Int to Float"),
-            Tag::Float => unsafe { self.value.Float },
-            Tag::Pair => panic!("Can't cast Pair to Float"),
-            Tag::Func => panic!("Can't cast Func to Float"),
-            Tag::String => todo!(),
-            Tag::Return => todo!(),
-            Tag::Symbol => todo!(),
-            Tag::Port => todo!(),
+    pub fn as_float(&self) -> Option<f64> {
+        if let Self::Float(v) = self {
+            Some(*v)
+        } else {
+            None
         }
     }
 
-    pub fn as_pair(&self) -> &Pair {
-        match self.tag {
-            Tag::FRef => todo!(),
-            Tag::Error => todo!(),
-            Tag::Null => panic!("Can't cast Null to Pair"),
-            Tag::Int => panic!("Can't cast Int to Pair"),
-            Tag::Float => panic!("Can't cast Float to Pair"),
-            Tag::Pair => unsafe { self.value.Pair.as_ref() },
-            Tag::Func => panic!("Can't cast Func to Pair"),
-            Tag::String => todo!(),
-            Tag::Return => todo!(),
-            Tag::Symbol => todo!(),
-            Tag::Port => todo!(),
+    pub fn as_pair(&self) -> Option<&Pair> {
+        if let Self::Pair(v) = self {
+            Some(v)
+        } else {
+            None
         }
     }
 
-    pub fn as_pair_owned(self) -> Pair {
-        match self.tag {
-            Tag::FRef => todo!(),
-            Tag::Error => todo!(),
-            Tag::Null => panic!("Can't cast Null to Pair"),
-            Tag::Int => panic!("Can't cast Int to Pair"),
-            Tag::Float => panic!("Can't cast Float to Pair"),
-            Tag::Pair => unsafe {
-                Box::into_inner(ManuallyDrop::into_inner(self.value.Pair.clone()))
-            },
-            Tag::Func => panic!("Can't cast Func to Pair"),
-            Tag::String => todo!(),
-            Tag::Return => todo!(),
-            Tag::Symbol => todo!(),
-            Tag::Port => todo!(),
+    pub fn as_pair_mut(&mut self) -> Option<&mut Pair> {
+        if let Self::Pair(v) = self {
+            Some(v)
+        } else {
+            None
         }
     }
 
-    pub fn as_pair_mut(&mut self) -> &mut Pair {
-        match self.tag {
-            Tag::FRef => todo!(),
-            Tag::Error => todo!(),
-            Tag::Null => panic!("Can't cast Null to Pair"),
-            Tag::Int => panic!("Can't cast Int to Pair"),
-            Tag::Float => panic!("Can't cast Float to Pair"),
-            Tag::Pair => unsafe { (*self.value.Pair).as_mut() },
-            Tag::Func => panic!("Can't cast Func to Pair"),
-            Tag::String => todo!(),
-            Tag::Return => todo!(),
-            Tag::Symbol => todo!(),
-            Tag::Port => todo!(),
+    pub fn pair(car: mem::Ref, cdr: mem::Ref) -> Self {
+        Self::Pair(Pair { car, cdr })
+    }
+
+    pub fn pair_alloc(car: Atom, cdr: Atom) -> Self {
+        Self::Pair(Pair {
+            car: mem::alloc(car),
+            cdr: mem::alloc(cdr),
+        })
+    }
+
+    pub fn as_func(&self) -> Option<&&'static Func> {
+        if let Self::Func(v) = self {
+            Some(v)
+        } else {
+            None
         }
     }
 
-    pub fn as_func(&self) -> &Func {
-        match self.tag {
-            Tag::FRef => todo!(),
-            Tag::Error => todo!(),
-            Tag::Null => panic!("Can't cast Null to Func"),
-            Tag::Int => panic!("Can't cast Int to Func"),
-            Tag::Float => panic!("Can't cast Float to Func"),
-            Tag::Pair => panic!("Can't cast Pair to Func"),
-            Tag::Func => unsafe { self.value.Func.as_ref() },
-            Tag::String => todo!(),
-            Tag::Return => todo!(),
-            Tag::Symbol => todo!(),
-            Tag::Port => todo!(),
-        }
-    }
-    pub fn as_bool(&self) -> bool {
-        match self.tag {
-            Tag::FRef => todo!(),
-            Tag::Error => todo!(),
-            Tag::Null => false,
-            _ => true,
-        }
-    }
-    pub fn as_string(&self) -> &str {
-        match self.tag {
-            Tag::FRef => todo!(),
-            Tag::Error => todo!(),
-            Tag::Null => panic!("Can't cast Null to String"),
-            Tag::Int => panic!("Can't cast Int to String"),
-            Tag::Float => panic!("Can't cast Float to String"),
-            Tag::Pair => panic!("Can't cast Pair to String"),
-            Tag::Func => panic!("Can't cast Func to String"),
-            Tag::String => unsafe { self.value.String.as_ref() },
-            Tag::Return => panic!("Can't cast Return to String"),
-            Tag::Symbol => self.as_symbol(),
-            Tag::Port => todo!(),
-        }
-    }
-    pub fn as_symbol(&self) -> &Symbol {
-        match self.tag {
-            Tag::FRef => todo!(),
-            Tag::Error => todo!(),
-            Tag::Null => panic!("Can't cast Null to Symbol"),
-            Tag::Int => panic!("Can't cast Int to Symbol"),
-            Tag::Float => panic!("Can't cast Float to Symbol"),
-            Tag::Pair => panic!("Can't cast Pair to Symbol"),
-            Tag::Func => panic!("Can't cast Func to Symbol"),
-            Tag::String => todo!(),
-            Tag::Return => todo!(),
-            Tag::Symbol => unsafe { self.value.Symbol.as_ref() },
-            Tag::Port => todo!(),
-        }
-    }
-
-    pub fn as_error(&self) -> ErrorCode {
-        match self.tag {
-            Tag::FRef => todo!(),
-            Tag::Error => unsafe { self.value.Error.into() },
-            Tag::Null => todo!(),
-            Tag::Int => todo!(),
-            Tag::Float => todo!(),
-            Tag::Pair => todo!(),
-            Tag::Func => todo!(),
-            Tag::Symbol => todo!(),
-            Tag::String => todo!(),
-            Tag::Return => todo!(),
-            Tag::Port => todo!(),
-        }
-    }
-
-    pub fn as_port(&self) -> RawFd {
-        match self.tag {
-            Tag::FRef => todo!(),
-            Tag::Error => todo!(),
-            Tag::Null => todo!(),
-            Tag::Int => todo!(),
-            Tag::Float => todo!(),
-            Tag::Pair => todo!(),
-            Tag::Func => todo!(),
-            Tag::Symbol => todo!(),
-            Tag::String => todo!(),
-            Tag::Return => todo!(),
-            Tag::Port => todo!(),
-        }
-    }
-}
-
-impl Drop for Atom {
-    fn drop(&mut self) {
-        match self.tag {
-            Tag::Pair => unsafe { ManuallyDrop::drop(&mut self.value.Pair) },
-            Tag::Func => unsafe { ManuallyDrop::drop(&mut self.value.Func) },
-            Tag::Symbol => unsafe { ManuallyDrop::drop(&mut self.value.Symbol) },
-            Tag::String => unsafe { ManuallyDrop::drop(&mut self.value.String) },
-            Tag::Return => unsafe { ManuallyDrop::drop(&mut self.value.Return) },
-            Tag::Port => todo!(),
-            _ => (),
+    pub fn as_symbol(&self) -> Option<&SymId> {
+        if let Self::Symbol(v) = self {
+            Some(v)
+        } else {
+            None
         }
     }
 }
 
 impl Debug for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} ", self.tag)?;
-        match self.tag {
-            Tag::FRef => write!(f, "{:?}", unsafe { &*self.value.FRef }),
-            Tag::Error => write!(f, "{:?}", self.as_error()),
-            Tag::Null => ().okay(),
-            Tag::Int => write!(f, "{:?}", self.as_int()),
-            Tag::Float => write!(f, "{:?}", self.as_float()),
-            Tag::Pair => write!(f, "{:?}", self.as_pair()),
-            Tag::Func => write!(f, "{:?}", self.as_func()),
-            Tag::String => write!(f, "{:?}", self.as_string()),
-            Tag::Return => write!(f, "{:?}", unsafe {
-                ManuallyDrop::into_inner(self.value.Return.clone())
-            }),
-            Tag::Symbol => write!(f, "{:?}", self.as_symbol()),
-            Tag::Port => write!(f, "{:?}", self.as_port()),
+        match self {
+            Atom::FRef(r) => write!(f, "FRef({:?})", r),
+            Atom::Error(e) => write!(f, "Error::{:?}", e),
+            Atom::Null => write!(f, "Null"),
+            Atom::Int(i) => write!(f, "i{:?}", i),
+            Atom::Float(i) => write!(f, "f{:?}", i),
+            Atom::Pair(Pair { car, cdr }) => write!(f, "({:?} . {:?})", car.deref(), cdr.deref()),
+            Atom::Func(func) => write!(f, "Func {:?}", func),
+            Atom::Symbol(s) => write!(f, "Symbol {:?}", s),
+            Atom::String(s) => write!(f, "String {:?}", s),
+            Atom::Return(r) => write!(f, "Return({:?})", r),
+            Atom::Macro(r) => write!(f, "Macro({:?})", r),
+            Atom::Quoted(r) => write!(f, "Quoted({:?})", r.deref()),
         }
     }
 }
 
 impl Display for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.tag {
-            Tag::FRef => todo!(),
-            Tag::Error => write!(f, "Error {:?}", self.as_error()),
-            Tag::Null => write!(f, "Null"),
-            Tag::Int => write!(f, "{}", self.as_int()),
-            Tag::Float => write!(f, "{}", self.as_float()),
-            Tag::Pair => write!(f, "{}", self.as_pair()),
-            Tag::Func => write!(f, "Function"),
-            Tag::String => write!(f, "{}", self.as_string()),
-            Tag::Return => write!(f, "{}", unsafe {
-                ManuallyDrop::into_inner(self.value.Return.clone())
-            }),
-            Tag::Symbol => write!(f, "{}", self.as_string()),
-            Tag::Port => write!(f, "{}", self.as_port()),
-        }
-    }
-}
-
-#[repr(i32)]
-#[derive(Clone, Copy)]
-pub enum Tag {
-    FRef = -2,
-    Error = -1,
-    Null = 0,
-    Int = 1,
-    Float = 2,
-    Pair = 3,
-    Func = 4,
-    Symbol = 5,
-    String = 6,
-    Return = 7,
-    Port = 8,
-}
-
-impl Debug for Tag {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::FRef => write!(f, "FRef"),
-            Self::Error => write!(f, "Error"),
-            Self::Null => write!(f, "Null"),
-            Self::Int => write!(f, "Int"),
-            Self::Float => write!(f, "Float"),
-            Self::Pair => write!(f, "Pair"),
-            Self::Func => write!(f, "Func"),
-            Self::String => write!(f, "String"),
-            Self::Return => write!(f, "Return"),
-            Self::Symbol => write!(f, "Symbol"),
-            Self::Port => write!(f, "Port"),
+            Atom::FRef(r) => write!(f, "FRef({:?})", r),
+            Atom::Error(e) => write!(f, "{:?}", e),
+            Atom::Null => write!(f, "Null"),
+            Atom::Int(i) => write!(f, "{}", i),
+            Atom::Float(i) => write!(f, "{}", i),
+            Atom::Pair(Pair { car, cdr }) => write!(f, "({} . {})", car.deref(), cdr.deref()),
+            Atom::Func(func) => write!(f, "{:?}", func),
+            Atom::Symbol(s) => write!(f, "{:?}", s),
+            Atom::String(s) => write!(f, "{:?}", s),
+            Atom::Return(r) => write!(f, "Return({})", r.deref()),
+            Atom::Macro(r) => write!(f, "Macro({:?})", r),
+            Atom::Quoted(r) => write!(f, "{}", r.deref()),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 #[repr(u64)]
 pub enum ErrorCode {
     Arity = 0,
     Type = 1,
-}
-
-impl From<u64> for ErrorCode {
-    fn from(n: u64) -> Self {
-        match n {
-            0 => Self::Arity,
-            1 => Self::Type,
-            _ => panic!("Invalid error code"),
-        }
-    }
 }

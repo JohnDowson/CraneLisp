@@ -22,7 +22,7 @@ impl Validator for InputValidator {
 }
 
 pub fn repl(time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
-    // let mut jit = Jit::new(clir);
+    let mut env = cranelisp::setup();
 
     let h = InputValidator {
         brackets: MatchingBracketValidator::new(),
@@ -63,11 +63,16 @@ pub fn repl(time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
             println!("{:#?}", tree);
         }
 
-        match { crate::eval::eval(tree) } {
-            Ok(v) => println!(": {:?}", v),
+        let old_env = env.clone();
+
+        env = match { crate::eval::eval(tree, env.fork()) } {
+            Ok((v, env)) => {
+                println!(": {:?}", v);
+                env
+            }
             Err(e) => {
                 provide_diagnostic(&e, src);
-                continue;
+                old_env
             }
         };
 
@@ -85,7 +90,7 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, _clir: bool) -> 
         File::open(prog)?.read_to_string(&mut buf)?;
         buf
     };
-    // let mut jit = Jit::new(clir);
+    let mut env = cranelisp::setup();
 
     let t1 = Instant::now();
     let mut lexer = match Lexer::new(src.clone()) {
@@ -113,8 +118,11 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, _clir: bool) -> 
         }
 
         let t1 = Instant::now();
-        match crate::eval::eval(tree) {
-            Ok(v) => println!(": {:?}", v),
+        env = match crate::eval::eval(tree, env) {
+            Ok((v, env)) => {
+                println!(": {:?}", v);
+                env
+            }
             Err(e) => {
                 provide_diagnostic(&e, src);
                 return e.error();

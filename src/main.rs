@@ -5,7 +5,7 @@ use repl::{eval_source, repl};
 use std::fmt::Debug;
 mod repl;
 
-#[derive(clap::Parser)]
+#[derive(Parser)]
 struct Args {
     #[clap(short, long)]
     time: bool,
@@ -20,8 +20,6 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-
-    cranelisp::setup();
     if let Some(source) = args.source {
         eval_source(
             &source,
@@ -60,8 +58,6 @@ pub fn provide_diagnostic(error: &CranelispError, program: impl Into<ariadne::So
             }
             report.finish().eprint(program.into()).unwrap();
         }
-        CranelispError::JIT(e) => todo!("{:#?}", e),
-        CranelispError::Optimizer(e) => todo!("{:#?}", e),
     }
 }
 
