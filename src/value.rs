@@ -1,15 +1,13 @@
-use crate::{function::Func, mem};
+use crate::mem;
 use std::{
     fmt::{Debug, Display},
     ops::Deref,
+    rc::Rc,
 };
 mod symbol;
-use once_cell::unsync::Lazy;
 pub use symbol::*;
 mod utils;
 pub use utils::*;
-
-pub static mut NULL: Lazy<mem::Ref> = Lazy::new(|| mem::alloc(Atom::Null));
 
 pub struct Pair {
     pub car: mem::Ref,
@@ -19,25 +17,31 @@ pub struct Pair {
 impl Debug for Pair {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Pair")
-            .field(&self.car.clone().deref())
-            .field(&self.cdr.clone().deref())
+            .field(&self.car)
+            .field(&self.cdr)
             .finish()
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Func {
+    pub args: Vec<SymId>,
+    pub iptr: usize,
+}
+
 pub enum Atom {
-    FRef(usize),
+    FRef(Option<usize>),
     Error(ErrorCode),
     Null,
     Int(i64),
     Float(f64),
+    Bool(bool),
     Pair(Pair),
-    Func(&'static Func),
+    Func(Func),
     Symbol(SymId),
-    String(String),
-    Return(mem::Ref),
-    Macro(&'static Func),
-    Quoted(mem::Ref),
+    String(Rc<String>),
+    Macro(&'static ()),
+    Ptr(mem::Ref),
 }
 
 impl Clone for Atom {
@@ -48,25 +52,22 @@ impl Clone for Atom {
             Atom::Null => Self::Null,
             Atom::Int(inner) => Self::Int(*inner),
             Atom::Float(inner) => Self::Float(*inner),
+            Atom::Bool(inner) => Self::Bool(*inner),
             Atom::Pair(Pair { car, cdr }) => Self::Pair(Pair {
                 car: car.clone(),
                 cdr: cdr.clone(),
             }),
-            Atom::Func(inner) => Self::Func(*inner),
+            Atom::Func(inner) => Self::Func(inner.clone()),
             Atom::Symbol(inner) => Self::Symbol(*inner),
             Atom::String(inner) => Self::String(inner.clone()),
-            Atom::Return(inner) => Self::Return(inner.clone()),
             Atom::Macro(inner) => Self::Macro(*inner),
-            Atom::Quoted(inner) => Self::Quoted(inner.clone()),
+            Atom::Ptr(inner) => Self::Ptr(inner.clone()),
         }
     }
 }
 
 impl Atom {
-    pub const TRUE: Self = Self::Int(1);
-    pub const FALSE: Self = Self::Null;
-
-    pub fn as_fref(&self) -> Option<usize> {
+    pub fn as_fref(&self) -> Option<Option<usize>> {
         if let Self::FRef(v) = self {
             Some(*v)
         } else {
@@ -87,6 +88,14 @@ impl Atom {
     /// [`Null`]: Atom::Null
     pub fn is_null(&self) -> bool {
         matches!(self, Self::Null)
+    }
+
+    pub fn truthy(&self) -> bool {
+        if let Some(b) = self.as_bool() {
+            b
+        } else {
+            !self.is_null()
+        }
     }
 
     /// Returns `true` if the atom is [`Error`].
@@ -139,17 +148,43 @@ impl Atom {
         })
     }
 
-    pub fn as_func(&self) -> Option<&&'static Func> {
+    pub fn new_func(args: Vec<SymId>, iptr: usize) -> Self {
+        Self::Func(Func { args, iptr })
+    }
+
+    pub fn as_func(&self) -> Option<Func> {
         if let Self::Func(v) = self {
-            Some(v)
+            Some(v.clone())
         } else {
             None
         }
     }
 
-    pub fn as_symbol(&self) -> Option<&SymId> {
+    pub fn as_symbol(&self) -> Option<SymId> {
         if let Self::Symbol(v) = self {
-            Some(v)
+            Some(*v)
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` if the atom is [`FRef`].
+    ///
+    /// [`FRef`]: Atom::FRef
+    pub fn is_fref(&self) -> bool {
+        matches!(self, Self::FRef(..))
+    }
+
+    /// Returns `true` if the atom is [`Bool`].
+    ///
+    /// [`Bool`]: Atom::Bool
+    pub fn is_bool(&self) -> bool {
+        matches!(self, Self::Bool(..))
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        if let Self::Bool(v) = self {
+            Some(*v)
         } else {
             None
         }
@@ -164,13 +199,13 @@ impl Debug for Atom {
             Atom::Null => write!(f, "Null"),
             Atom::Int(i) => write!(f, "i{:?}", i),
             Atom::Float(i) => write!(f, "f{:?}", i),
+            Atom::Bool(b) => write!(f, "{:?}", b),
             Atom::Pair(Pair { car, cdr }) => write!(f, "({:?} . {:?})", car.deref(), cdr.deref()),
             Atom::Func(func) => write!(f, "Func {:?}", func),
             Atom::Symbol(s) => write!(f, "Symbol {:?}", s),
             Atom::String(s) => write!(f, "String {:?}", s),
-            Atom::Return(r) => write!(f, "Return({:?})", r),
             Atom::Macro(r) => write!(f, "Macro({:?})", r),
-            Atom::Quoted(r) => write!(f, "Quoted({:?})", r.deref()),
+            Atom::Ptr(r) => write!(f, "Ptr({:?})", r),
         }
     }
 }
@@ -183,13 +218,13 @@ impl Display for Atom {
             Atom::Null => write!(f, "Null"),
             Atom::Int(i) => write!(f, "{}", i),
             Atom::Float(i) => write!(f, "{}", i),
+            Atom::Bool(b) => write!(f, "{}", b),
             Atom::Pair(Pair { car, cdr }) => write!(f, "({} . {})", car.deref(), cdr.deref()),
             Atom::Func(func) => write!(f, "{:?}", func),
             Atom::Symbol(s) => write!(f, "{:?}", s),
             Atom::String(s) => write!(f, "{:?}", s),
-            Atom::Return(r) => write!(f, "Return({})", r.deref()),
             Atom::Macro(r) => write!(f, "Macro({:?})", r),
-            Atom::Quoted(r) => write!(f, "{}", r.deref()),
+            Atom::Ptr(r) => write!(f, "&{:?}", r),
         }
     }
 }

@@ -1,5 +1,9 @@
 use std::{fs::File, io::Read, time::Instant};
 
+use cranelisp::{
+    translate::{self},
+    vm::VM,
+};
 use rustyline::{
     validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
     Config, EditMode,
@@ -22,8 +26,6 @@ impl Validator for InputValidator {
 }
 
 pub fn repl(time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
-    let env = cranelisp::env::setup();
-
     let h = InputValidator {
         brackets: MatchingBracketValidator::new(),
     };
@@ -34,6 +36,9 @@ pub fn repl(time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
         .build();
     let mut rl = Editor::with_config(config);
     rl.set_helper(Some(h));
+
+    let env = cranelisp::env::setup();
+
     loop {
         let src = rl.readline("> ")?;
         if let "q\n" = &*src {
@@ -63,15 +68,15 @@ pub fn repl(time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
             println!("{:#?}", tree);
         }
 
-        match { crate::eval::eval(tree, env) } {
-            Ok(v) => {
-                println!(": {:?}", v);
-            }
-            Err(e) => {
-                provide_diagnostic(&e, src);
-                continue;
-            }
-        };
+        let mut translator = translate::Translator::new();
+        let code = translator.translate(tree.0);
+
+        println!("{:?}", code);
+        let code = translator.compile(code);
+        println!("{:?}", code);
+        let mut vm = VM::new(code, 100, env);
+        let v = vm.run();
+        println!("{:?}", v);
 
         let t2 = Instant::now();
         if time {
@@ -87,6 +92,7 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, _clir: bool) -> 
         File::open(prog)?.read_to_string(&mut buf)?;
         buf
     };
+
     let env = cranelisp::env::setup();
 
     let t1 = Instant::now();
@@ -115,15 +121,17 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, _clir: bool) -> 
         }
 
         let t1 = Instant::now();
-        match crate::eval::eval(tree, env) {
-            Ok(v) => {
-                println!(": {:?}", v);
-            }
-            Err(e) => {
-                provide_diagnostic(&e, src);
-                return e.error();
-            }
-        };
+
+        let mut translator = translate::Translator::new();
+        let code = translator.translate(tree.0);
+
+        println!("{:?}", code);
+        let code = translator.compile(code);
+        println!("{:?}", code);
+        let mut vm = VM::new(code, 100, env);
+        let v = vm.run();
+        println!("{:?}", v);
+
         let t2 = Instant::now();
         if time {
             println!("exec time {:?}", t2 - t1);

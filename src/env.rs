@@ -1,31 +1,38 @@
 use fnv::FnvHashMap;
 use once_cell::unsync::Lazy;
-use slotmap::{DefaultKey, SlotMap};
-use somok::{Leaksome, Somok};
+use slotmap::SlotMap;
 use std::ops::{Index, IndexMut};
 
-use crate::{
-    function::Func,
-    libcl,
-    value::{intern, Atom, SymId},
-};
-
-pub type EnvId = DefaultKey;
+use crate::{mem, value::SymId, EnvId};
 
 static mut ENVS: Lazy<SlotMap<EnvId, Env>> = Lazy::new(SlotMap::new);
 
-#[derive(Debug)]
+pub fn setup() -> EnvId {
+    unsafe { ENVS.insert(Env::default()) }
+}
+
+#[derive(Debug, Default)]
 pub struct Env {
     parent: Option<EnvId>,
-    inner: FnvHashMap<SymId, Atom>,
+    inner: FnvHashMap<SymId, mem::Ref>,
 }
 
 impl Env {
-    pub fn insert(&mut self, sym: SymId, atom: Atom) {
+    pub fn insert(&mut self, sym: SymId, atom: mem::Ref) {
         self.inner.insert(sym, atom);
     }
 
-    pub fn try_get(&self, index: SymId) -> Option<&Atom> {
+    pub fn insert_toplevel(&self, sym: SymId, atom: mem::Ref) {
+        let mut parent = self.parent;
+        let mut last = self.parent;
+        while let Some(p) = parent {
+            last = parent;
+            parent = get_env(p).parent;
+        }
+        get_env(last.unwrap()).insert(sym, atom);
+    }
+
+    pub fn try_get(&self, index: SymId) -> Option<&mem::Ref> {
         self.inner.get(&index).or_else(|| {
             if let Some(parent) = self.parent {
                 unsafe { ENVS.get(parent).expect("Invalid parent env reference") }.try_get(index)
@@ -35,7 +42,7 @@ impl Env {
         })
     }
 
-    pub fn try_get_mut(&mut self, index: SymId) -> Option<&mut Atom> {
+    pub fn try_get_mut(&mut self, index: SymId) -> Option<&mut mem::Ref> {
         self.inner.get_mut(&index).or_else(|| {
             if let Some(parent) = self.parent {
                 unsafe { ENVS.get_mut(parent).expect("Invalid parent env reference") }
@@ -48,7 +55,7 @@ impl Env {
 }
 
 impl Index<SymId> for Env {
-    type Output = Atom;
+    type Output = mem::Ref;
 
     fn index(&self, index: SymId) -> &Self::Output {
         self.inner.get(&index).unwrap_or_else(|| {
@@ -72,24 +79,6 @@ impl IndexMut<SymId> for Env {
     }
 }
 
-pub fn setup() -> EnvId {
-    let mut env = Env {
-        parent: None,
-        inner: Default::default(),
-    };
-    env.insert(intern("nil"), Atom::Null);
-    env.insert(intern("t"), Atom::Int(1));
-    env.insert(
-        intern("+"),
-        Atom::Func(Func::from_fn(libcl::add).boxed().leak()),
-    );
-    env.insert(
-        intern("-"),
-        Atom::Func(Func::from_fn(libcl::sub).boxed().leak()),
-    );
-    unsafe { ENVS.insert(env) }
-}
-
 pub fn get_env(env: EnvId) -> &'static mut Env {
     unsafe { ENVS.get_mut(env).expect("Invalid parent env reference") }
 }
@@ -102,8 +91,20 @@ pub fn fork_env(env: EnvId) -> EnvId {
     unsafe { ENVS.insert(new) }
 }
 
-pub fn unfork_env(env: EnvId) {
+pub fn mark(env: EnvId) {
+    let env = get_env(env);
+    for (_, aref) in env.inner.iter() {
+        mem::mark(aref.clone());
+    }
+    if let Some(env) = env.parent {
+        mark(env)
+    }
+}
+
+pub fn unfork_env(env: EnvId) -> Option<EnvId> {
+    let parent = get_env(env).parent;
     unsafe {
         ENVS.remove(env);
     }
+    parent
 }

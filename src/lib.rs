@@ -1,8 +1,8 @@
 #![feature(box_into_inner)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
+#![feature(assert_matches)]
 
-#[macro_export]
 macro_rules! syntax {
     ($kind:tt, $($spans:expr),+) => {
         {
@@ -25,21 +25,31 @@ macro_rules! syntax {
         }
     };
 }
-pub mod errors;
-pub mod eval;
-pub mod function;
-// pub mod jit;
+macro_rules! null {
+    () => {
+        mem::alloc(Atom::Null)
+    };
+}
+
 pub mod env;
+pub mod errors;
+// pub mod eval;
+// pub mod function;
 pub mod lexer;
-pub mod libcl;
+// pub mod libcl;
 pub mod mem;
 pub mod parser;
+pub mod translate;
 pub mod value;
+pub mod vm;
 
 pub use errors::*;
+use slotmap::DefaultKey;
+
 use fnv::FnvBuildHasher;
 use indexmap::IndexSet;
 
+pub type EnvId = DefaultKey;
 pub type FnvIndexSet<T> = IndexSet<T, FnvBuildHasher>;
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
 

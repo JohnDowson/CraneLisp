@@ -147,6 +147,14 @@ impl Lexer {
                     self.consume();
                     Token::Quote(Span::point(self.next - 1)).okay()
                 }
+                ',' => {
+                    self.consume();
+                    Token::Paste(Span::point(self.next - 1)).okay()
+                }
+                '`' => {
+                    self.consume();
+                    Token::Quasi(Span::point(self.next - 1)).okay()
+                }
                 '#' => {
                     self.consume();
                     self.consume_until(|c| c == '\n');

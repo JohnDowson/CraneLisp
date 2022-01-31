@@ -8,11 +8,14 @@ pub enum Token {
     RParen(Span),
     Float(f64, Span),
     Integer(i64, Span),
+    Bool(bool, Span),
     Symbol(SmolStr, Span),
     String(String, Span),
-    Quote(Span),
     Eof(Span),
     Whitespace(Span),
+    Quote(Span),
+    Paste(Span),
+    Quasi(Span),
 }
 
 impl Debug for Token {
@@ -22,11 +25,14 @@ impl Debug for Token {
             Self::RParen(..) => write!(f, ")"),
             Self::Float(float, ..) => write!(f, "{:?}", float),
             Self::Integer(int, ..) => write!(f, "{:?}", int),
+            Self::Bool(b, ..) => write!(f, "{:?}", b),
             Self::Symbol(sym, ..) => write!(f, "{:?}", sym),
             Self::String(str, ..) => write!(f, "\"{:?}\"", str),
-            Self::Quote(..) => write!(f, "'"),
             Self::Eof(..) => write!(f, "Eof"),
             Self::Whitespace(..) => write!(f, " "),
+            Self::Paste(_) => write!(f, ",P"),
+            Self::Quote(..) => write!(f, "'Q"),
+            Self::Quasi(_) => write!(f, "`U"),
         }
     }
 }
@@ -38,11 +44,14 @@ impl Token {
             Token::RParen(span) => span,
             Token::Float(_, span) => span,
             Token::Integer(_, span) => span,
+            Token::Bool(_, span) => span,
             Token::Symbol(_, span) => span,
             Token::String(_, span) => span,
-            Token::Quote(span) => span,
             Token::Eof(span) => span,
             Token::Whitespace(span) => span,
+            Token::Quote(span) => span,
+            Token::Paste(span) => span,
+            Token::Quasi(span) => span,
         }
     }
     pub fn extract_float(&self) -> f64 {

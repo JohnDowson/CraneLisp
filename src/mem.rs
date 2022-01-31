@@ -1,23 +1,14 @@
-use crate::value::Atom;
-use once_cell::unsync::Lazy;
+use std::ops::Deref;
 
-static mut STACK: Lazy<Stack> = Lazy::new(Stack::default);
+use crate::value::{Atom, Pair};
+use once_cell::unsync::Lazy;
+use somok::Somok;
+
 static mut HEAP: Lazy<Heap> = Lazy::new(Heap::default);
 
 pub fn debug() {
     unsafe {
-        println!("{:?}\n{:?}", &STACK, &HEAP);
-    }
-}
-
-pub fn push(a: Atom) {
-    unsafe {
-        STACK.push(a);
-    }
-}
-pub fn pop(a: Atom) {
-    unsafe {
-        STACK.push(a);
+        println!("{:?}", &HEAP.inner);
     }
 }
 
@@ -30,17 +21,30 @@ pub fn drop(rf: Ref) {
     }
 }
 
-pub fn collect() {
-    for atom in unsafe { &STACK }.iter() {
-        mark(atom)
+pub fn mark(aref: Ref) {
+    unsafe {
+        HEAP.mark(aref);
     }
 }
 
-fn mark(_atom: &Atom) {}
+pub fn collect() {
+    for (i, (a, marker)) in unsafe { HEAP.inner.iter_mut().enumerate() } {
+        if !*marker && !a.is_fref() {
+            drop(Ref(i))
+        }
+        *marker = false;
+    }
+}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 #[repr(C)]
 pub struct Ref(usize);
+
+impl std::fmt::Debug for Ref {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "&{:?}:{:?}", self.0, self.deref())
+    }
+}
 
 impl std::ops::Deref for Ref {
     type Target = Atom;
@@ -86,8 +90,8 @@ impl Stack {
         self.inner.pop();
     }
 
-    pub fn peek(&mut self) -> Option<Atom> {
-        self.inner.last().cloned()
+    pub fn peek(&mut self) -> Option<&Atom> {
+        self.inner.last()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Atom> {
@@ -95,10 +99,19 @@ impl Stack {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct Heap {
     inner: Vec<(Atom, bool)>,
     fref_head: Option<usize>,
+}
+
+impl std::fmt::Debug for Heap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Heap")
+            .field("inner", &self.inner.iter().enumerate().collect::<Vec<_>>())
+            .field("fref_head", &self.fref_head)
+            .finish()
+    }
 }
 
 impl Heap {
@@ -111,11 +124,8 @@ impl Heap {
 
     pub fn alloc(&mut self, atom: Atom) -> Ref {
         if let Some(head) = self.fref_head {
-            if self.inner[head].0.as_fref().unwrap() != 0 {
-                self.fref_head = self.inner[head].0.as_fref()
-            } else {
-                self.fref_head = None
-            }
+            self.fref_head = self.inner[head].0.as_fref().unwrap();
+
             self.inner[head] = (atom, false);
 
             Ref(head)
@@ -125,12 +135,13 @@ impl Heap {
         }
     }
 
-    pub fn drop(&mut self, rf: Ref) {
+    pub fn drop(&mut self, aref: Ref) {
         if let Some(head) = self.fref_head {
-            self.inner[rf.0 as usize] = (Atom::FRef(head), false);
+            self.inner[aref.0] = (Atom::FRef(head.some()), false);
+            self.fref_head = Some(aref.0);
         } else {
-            self.inner[rf.0 as usize] = (Atom::FRef(0), false);
-            self.fref_head = Some(rf.0 as usize);
+            self.inner[aref.0] = (Atom::FRef(None), false);
+            self.fref_head = Some(aref.0);
         }
     }
 
@@ -138,12 +149,28 @@ impl Heap {
         &self.inner.get(rf.as_usize()).expect("Invalid ref").0
     }
 
-    pub fn get_mut(&mut self, rf: &Ref) -> &mut Atom {
+    pub fn get_mut(&mut self, rf: &mut Ref) -> &mut Atom {
         &mut self.inner.get_mut(rf.as_usize()).expect("Invalid ref").0
     }
 
     pub fn mark(&mut self, rf: Ref) {
-        self.inner.get_mut(rf.as_usize()).expect("Invalid ref").1 = true
+        let (atom, marker) = self.inner.get_mut(rf.as_usize()).expect("Invalid ref");
+        if *marker {
+            return;
+        }
+        *marker = true;
+        match atom {
+            Atom::Pair(Pair { car, cdr }) => {
+                let (car, cdr) = (car.clone(), cdr.clone());
+                self.mark(car);
+                self.mark(cdr)
+            }
+            Atom::Ptr(ptr) => {
+                let ptr = ptr.clone();
+                self.mark(ptr)
+            }
+            _ => (),
+        }
     }
 }
 

@@ -1,34 +1,66 @@
-use std::ops::{Deref, DerefMut};
-
+use super::{intern, Atom};
 use crate::mem;
 
-use super::Atom;
-
-pub fn collect(atom: mem::Ref) -> Vec<Atom> {
-    let mut atoms = Vec::new();
-    let mut next = atom;
-    while let Some(pair) = next.as_pair() {
-        atoms.push(pair.car.deref().clone());
-        next = pair.cdr.clone();
+pub fn map_to_vec<T>(mut atom: mem::Ref, mut op: impl FnMut(&Atom) -> T) -> Vec<T> {
+    let mut res = vec![];
+    while let Some(p) = atom.as_pair() {
+        res.push(op(&*p.car));
+        atom = p.cdr.clone();
     }
-    atoms
+    res
 }
 
-pub fn map_to_vec<T>(atom: mem::Ref, mut op: impl FnMut(&Atom) -> T) -> Vec<T> {
-    let mut atoms = Vec::new();
+pub fn length(atom: mem::Ref) -> usize {
+    let mut count = 0;
     let mut next = atom;
     while let Some(pair) = next.as_pair() {
-        atoms.push(op(pair.car.deref()));
+        count += 1;
         next = pair.cdr.clone();
     }
-    atoms
+    count
 }
 
-pub fn map(atom: mem::Ref, mut op: impl FnMut(Atom) -> Atom) -> Atom {
-    let mut next = atom.clone();
-    while let Some(pair) = next.as_pair_mut() {
-        *pair.car.deref_mut() = op(pair.car.deref().clone());
-        next = pair.cdr.clone();
+pub fn nth(mut val: mem::Ref, mut n: isize) -> mem::Ref {
+    let mut res = null!();
+    while let Some(p) = val.as_pair() {
+        res = p.car.clone();
+        val = p.cdr.clone();
+        n -= 1;
+        if n < 0 {
+            break;
+        }
     }
-    atom.deref().clone()
+    res
+}
+
+pub fn restn(mut val: mem::Ref, mut n: isize) -> mem::Ref {
+    let mut res = null!();
+    while let Some(p) = val.as_pair() {
+        res = p.cdr.clone();
+        val = p.cdr.clone();
+        n -= 1;
+        if n < 0 {
+            break;
+        }
+    }
+    res
+}
+
+pub fn quoted(val: mem::Ref) -> mem::Ref {
+    mem::alloc(Atom::pair_alloc(
+        Atom::Symbol(intern("quote")),
+        Atom::pair(val, null!()),
+    ))
+}
+pub fn quasi(val: mem::Ref) -> mem::Ref {
+    mem::alloc(Atom::pair_alloc(
+        Atom::Symbol(intern("quasi")),
+        Atom::pair(val, null!()),
+    ))
+}
+pub fn paste(val: mem::Ref) -> mem::Ref {
+    mem::alloc(Atom::pair_alloc(
+        Atom::Symbol(intern("paste")),
+        Atom::pair(val, null!()),
+    ))
 }
