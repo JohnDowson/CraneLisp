@@ -1,6 +1,7 @@
 use std::ops::Deref;
 
 use crate::value::{Atom, Pair};
+use fnv::FnvHashSet;
 use once_cell::unsync::Lazy;
 use somok::Somok;
 
@@ -15,6 +16,15 @@ pub fn debug() {
 pub fn alloc(atom: Atom) -> Ref {
     unsafe { HEAP.alloc(atom) }
 }
+
+pub fn static_alloc(atom: Atom) -> Ref {
+    unsafe {
+        let aref = HEAP.alloc(atom);
+        HEAP.statics.insert(aref.0);
+        aref
+    }
+}
+
 pub fn drop(rf: Ref) {
     unsafe {
         HEAP.drop(rf);
@@ -29,7 +39,7 @@ pub fn mark(aref: Ref) {
 
 pub fn collect() {
     for (i, (a, marker)) in unsafe { HEAP.inner.iter_mut().enumerate() } {
-        if !*marker && !a.is_fref() {
+        if !*marker && !a.is_fref() && unsafe { !HEAP.statics.contains(&i) } {
             drop(Ref(i))
         }
         *marker = false;
@@ -102,6 +112,7 @@ impl Stack {
 #[derive(Clone)]
 pub struct Heap {
     inner: Vec<(Atom, bool)>,
+    statics: FnvHashSet<usize>,
     fref_head: Option<usize>,
 }
 
@@ -117,7 +128,8 @@ impl std::fmt::Debug for Heap {
 impl Heap {
     pub fn new() -> Self {
         Self {
-            inner: Vec::new(),
+            inner: Default::default(),
+            statics: Default::default(),
             fref_head: None,
         }
     }

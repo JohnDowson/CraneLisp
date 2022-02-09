@@ -8,7 +8,7 @@ use crate::{
     EnvId,
 };
 use somok::Somok;
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 use Opcode::*;
 use VmError::*;
 
@@ -18,6 +18,7 @@ pub enum VmError {
     TypeError(usize, std::string::String),
     NoEnv(usize),
     Undefined(usize),
+    IpOverflow(usize),
 }
 
 #[derive(Debug)]
@@ -42,12 +43,23 @@ impl VM {
         }
     }
 
+    pub fn reset_ip(&mut self) {
+        self.ip = 0
+    }
+
+    pub fn replace_code(&mut self, code: Vec<Opcode>) {
+        self.code = code
+    }
+
+    pub fn env(&self) -> EnvId {
+        self.active_env
+    }
+
     pub fn run(&mut self) -> Result<Atom, VmError> {
         'outer: loop {
             loop {
-                // dbg! {(&self.stack,&self.code[self.ip])};
                 if self.ip >= self.code.len() {
-                    panic!("Instruction pointer out of bounds {}", self.ip)
+                    return IpOverflow(self.ip).error();
                 }
                 if self.gc_period != 0 && self.cc >= self.gc_period {
                     self.cc = 0;
@@ -302,6 +314,10 @@ impl VM {
                             return StackUnderflow(self.ip).error();
                         }
                     }
+                    Dsp => {
+                        //dbg! {get_env(self.active_env)};
+                        //dbg! {&self.stack};
+                    }
 
                     Jump(ip) => {
                         self.ip = *ip;
@@ -331,10 +347,9 @@ impl VM {
                             .ok_or_else(|| TypeError(self.ip, "Expected Symbol".into()))?;
                         let func = env::get_env(self.active_env)
                             .try_get(func)
-                            .unwrap()
-                            .deref()
+                            .ok_or(Undefined(self.ip))?
                             .as_func()
-                            .unwrap();
+                            .ok_or_else(|| TypeError(self.ip, "Expected Func".into()))?;
                         self.active_env = fork_env(self.active_env);
                         let env = get_env(self.active_env);
                         for sym in func.args.iter() {
@@ -382,18 +397,6 @@ impl VM {
                 _ => (),
             }
         }
-        for opcode in self.code.iter() {
-            if let Push(a) = opcode {
-                match a {
-                    Pair(Pair { car, cdr }) => {
-                        mem::mark(car.clone());
-                        mem::mark(cdr.clone())
-                    }
-                    Ptr(ptr) => mem::mark(ptr.clone()),
-                    _ => (),
-                }
-            }
-        }
         env::mark(self.active_env)
     }
 }
@@ -421,6 +424,7 @@ pub enum Opcode {
     Gt,
     Le,
     Ge,
+    Dsp,
 
     Jump(usize),
     FJump(usize),

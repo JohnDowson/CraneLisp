@@ -21,15 +21,15 @@ impl<'l> Parser<'l> {
             }
 
             Token::Float(f, span) => {
-                let expr = (mem::alloc(Atom::Float(f)), span);
+                let expr = (mem::static_alloc(Atom::Float(f)), span);
                 expr.okay()
             }
             Token::Integer(i, span) => {
-                let expr = (mem::alloc(Atom::Int(i)), span);
+                let expr = (mem::static_alloc(Atom::Int(i)), span);
                 expr.okay()
             }
 
-            Token::Bool(b, span) => (mem::alloc(Atom::Bool(b)), span).okay(),
+            Token::Bool(b, span) => (mem::static_alloc(Atom::Bool(b)), span).okay(),
 
             token @ Token::LParen(..) => {
                 self.skip_whitespace()?;
@@ -38,10 +38,12 @@ impl<'l> Parser<'l> {
 
             Token::Symbol(sym, span) => {
                 let sym = intern(sym);
-                (mem::alloc(Atom::Symbol(sym)), span).okay()
+                (mem::static_alloc(Atom::Symbol(sym)), span).okay()
             }
 
-            Token::String(string, span) => (mem::alloc(Atom::String(Rc::new(string))), span).okay(),
+            Token::String(string, span) => {
+                (mem::static_alloc(Atom::String(Rc::new(string))), span).okay()
+            }
 
             Token::Whitespace(..) => self.parse_expr(),
 
@@ -91,7 +93,7 @@ impl<'l> Parser<'l> {
                 _ => return e.error(),
             },
         };
-        let head = mem::alloc(head);
+        let head = mem::static_alloc(head);
         let mut atom = head.clone();
         loop {
             match self.lexer.peek_token()? {
@@ -112,7 +114,7 @@ impl<'l> Parser<'l> {
                 }
                 _ => {
                     let (next_atom, _) = self.parse_expr()?;
-                    let next_pair = mem::alloc(Atom::pair(next_atom, null!()));
+                    let next_pair = mem::static_alloc(Atom::pair(next_atom, null!()));
                     atom.as_pair_mut().unwrap().cdr = next_pair.clone();
                     atom = next_pair;
                 }

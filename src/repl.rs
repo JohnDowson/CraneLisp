@@ -37,7 +37,7 @@ pub fn repl(time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
     let mut rl = Editor::with_config(config);
     rl.set_helper(Some(h));
 
-    let env = cranelisp::env::setup();
+    let _env = cranelisp::env::setup();
 
     loop {
         let src = rl.readline("> ")?;
@@ -68,15 +68,35 @@ pub fn repl(time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
             println!("{:#?}", tree);
         }
 
-        let mut translator = translate::Translator::new();
-        let code = translator.translate(tree.0);
+        use cranelisp::vm2;
+        let mut translator = vm2::translate::Translator::new();
 
-        println!("{:?}", code);
-        let code = translator.compile(code);
-        println!("{:?}", code);
-        let mut vm = VM::new(code, 100, env);
-        let v = vm.run();
-        println!("{:?}", v);
+        translator.translate_top_level(tree.0).unwrap();
+        // let mut translator = translate::Translator::new();
+        // let code = translator.translate(tree.0);
+        let code = translator.emit();
+        for ins in code.iter() {
+            println!("{ins}")
+        }
+        let code = vm2::asm::assemble(code);
+        println!("{code:?}");
+        let mut vm = vm2::Vm::with_code(code);
+        let mut halt = false;
+        while !halt {
+            halt = vm.execute().unwrap_or(true);
+            println!("Regs: {:?}", &vm.registers);
+            println!("Heap: {:?}", &vm.heap);
+            println!("sp: {}; bp: {};", &vm.sp, &vm.bp);
+            println!("Stack: {:?}", &vm.stack);
+            println!("Ret: {:?}", &vm.r#return);
+        }
+
+        // println!("{:?}", code);
+        // let code = translator.compile(code);
+        // println!("{:?}", code);
+        // let mut vm = VM::new(code, 100, env);
+        // let v = vm.run();
+        // println!("{:?}", v);
 
         let t2 = Instant::now();
         if time {

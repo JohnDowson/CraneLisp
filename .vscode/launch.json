@@ -23,7 +23,7 @@
                 "settings set target.x86-disassembly-flavor intel"
             ],
             "args": [
-                "./file.crl"
+                "fib_vm_tail_recursive.crl"
             ],
             "cwd": "${workspaceFolder}"
         },

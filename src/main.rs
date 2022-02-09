@@ -60,35 +60,3 @@ pub fn provide_diagnostic(error: &CranelispError, program: impl Into<ariadne::So
         }
     }
 }
-
-#[cfg(test)]
-mod test {
-    use crate::{lexer::Lexer, CranelispError};
-    #[test]
-    fn invalid_numeric_literal() {
-        let progs = ["1/1", "2a", "3.b"];
-
-        for prog in progs {
-            let mut lexer = Lexer::new(prog.into()).unwrap();
-            assert!(matches!(
-                lexer.next_token(),
-                Err(CranelispError::Syntax(..))
-            ))
-        }
-    }
-
-    #[test]
-    fn number_in_list() {
-        let prog = "(1.1 2 .3 4.)".into();
-        let tokens = Lexer::new(prog)
-            .unwrap()
-            .collect()
-            .into_iter()
-            .filter(|t| !t.is_whitespace() && !t.is_eof())
-            .collect::<Vec<_>>();
-        let expected = ["(", "(1.1)", "(2)", "(0.3)", "(4.0)", ")"];
-        for (i, &expect) in expected.iter().enumerate() {
-            assert_eq!(format!("{:?}", tokens[i]), expect)
-        }
-    }
-}

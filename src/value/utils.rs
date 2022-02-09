@@ -47,19 +47,19 @@ pub fn restn(mut val: mem::Ref, mut n: isize) -> mem::Ref {
 }
 
 pub fn quoted(val: mem::Ref) -> mem::Ref {
-    mem::alloc(Atom::pair_alloc(
+    mem::alloc(Atom::pair_alloc_static(
         Atom::Symbol(intern("quote")),
         Atom::pair(val, null!()),
     ))
 }
 pub fn quasi(val: mem::Ref) -> mem::Ref {
-    mem::alloc(Atom::pair_alloc(
+    mem::alloc(Atom::pair_alloc_static(
         Atom::Symbol(intern("quasi")),
         Atom::pair(val, null!()),
     ))
 }
 pub fn paste(val: mem::Ref) -> mem::Ref {
-    mem::alloc(Atom::pair_alloc(
+    mem::alloc(Atom::pair_alloc_static(
         Atom::Symbol(intern("paste")),
         Atom::pair(val, null!()),
     ))

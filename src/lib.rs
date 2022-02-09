@@ -25,9 +25,10 @@ macro_rules! syntax {
         }
     };
 }
+static mut NULL: Lazy<mem::Ref> = Lazy::new(|| mem::static_alloc(value::Atom::Null));
 macro_rules! null {
     () => {
-        mem::alloc(Atom::Null)
+        unsafe { crate::NULL.clone() }
     };
 }
 
@@ -42,8 +43,10 @@ pub mod parser;
 pub mod translate;
 pub mod value;
 pub mod vm;
+pub mod vm2;
 
 pub use errors::*;
+use once_cell::unsync::Lazy;
 use slotmap::DefaultKey;
 
 use fnv::FnvBuildHasher;

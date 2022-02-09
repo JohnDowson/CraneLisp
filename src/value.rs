@@ -9,6 +9,7 @@ pub use symbol::*;
 mod utils;
 pub use utils::*;
 
+#[derive(Clone)]
 pub struct Pair {
     pub car: mem::Ref,
     pub cdr: mem::Ref,
@@ -141,6 +142,13 @@ impl Atom {
         Self::Pair(Pair { car, cdr })
     }
 
+    pub fn pair_alloc_static(car: Atom, cdr: Atom) -> Self {
+        Self::Pair(Pair {
+            car: mem::static_alloc(car),
+            cdr: mem::static_alloc(cdr),
+        })
+    }
+
     pub fn pair_alloc(car: Atom, cdr: Atom) -> Self {
         Self::Pair(Pair {
             car: mem::alloc(car),
@@ -188,6 +196,13 @@ impl Atom {
         } else {
             None
         }
+    }
+
+    /// Returns `true` if the atom is [`Symbol`].
+    ///
+    /// [`Symbol`]: Atom::Symbol
+    pub fn is_symbol(&self) -> bool {
+        matches!(self, Self::Symbol(..))
     }
 }
 

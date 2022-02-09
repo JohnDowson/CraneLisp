@@ -11,6 +11,12 @@ use fnv::FnvHashMap;
 use somok::{CondPop, Somok};
 use std::ops::Deref;
 
+#[derive(Default)]
+pub struct FuncCC {
+    pub args: Vec<SymId>,
+    pub code: Vec<Opcode>,
+}
+
 pub struct Translator {
     label_id: usize,
     return_labels: FnvHashMap<SymId, usize>,
@@ -25,6 +31,7 @@ impl Translator {
             funcs: Default::default(),
         }
     }
+
     pub fn translate(&mut self, atom: mem::Ref) -> Vec<Opcode> {
         match atom.deref() {
             Symbol(symbol) if &**symbol == "t" => self.translate_const(Bool(true)),
@@ -233,7 +240,7 @@ impl Translator {
     }
 }
 
-const PRIMITIVE_FNS: [&str; 7] = ["+", "-", "=", "<", ">", "<=", ">="];
+const PRIMITIVE_FNS: [&str; 8] = ["+", "-", "=", "<", ">", "<=", ">=", "DSP"];
 
 fn primitive_opcode(sym: &str) -> Opcode {
     match sym {
@@ -244,6 +251,7 @@ fn primitive_opcode(sym: &str) -> Opcode {
         ">" => Opcode::Gt,
         "<=" => Opcode::Le,
         ">=" => Opcode::Ge,
+        "DSP" => Opcode::Dsp,
         _ => unreachable!(),
     }
 }

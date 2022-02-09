@@ -6,7 +6,7 @@ use std::{fmt::Debug, ops::Deref};
 static mut INTERNER: Lazy<FnvIndexSet<SmolStr>> = Lazy::new(FnvIndexSet::default);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SymId(usize);
+pub struct SymId(pub usize);
 
 impl Debug for SymId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

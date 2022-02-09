@@ -8,7 +8,10 @@ use crate::{mem, value::SymId, EnvId};
 static mut ENVS: Lazy<SlotMap<EnvId, Env>> = Lazy::new(SlotMap::new);
 
 pub fn setup() -> EnvId {
-    unsafe { ENVS.insert(Env::default()) }
+    unsafe {
+        ENVS.clear();
+        ENVS.insert(Env::default())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -20,6 +23,10 @@ pub struct Env {
 impl Env {
     pub fn insert(&mut self, sym: SymId, atom: mem::Ref) {
         self.inner.insert(sym, atom);
+    }
+
+    pub fn iter(&self) -> std::collections::hash_map::Iter<SymId, mem::Ref> {
+        self.inner.iter()
     }
 
     pub fn insert_toplevel(&self, sym: SymId, atom: mem::Ref) {
