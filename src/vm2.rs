@@ -218,7 +218,7 @@ impl Vm {
         #[cfg(debug_assertions)]
         {
             let dis = self.disassemble()?;
-            println!("{}:\t{}", self.ip, dis);
+            println!("\t{}:\t{}", self.ip, dis);
         };
 
         match self.decode() {
@@ -300,6 +300,25 @@ impl Vm {
                 self.ip -= offset;
             }
 
+            JumpT => {
+                let (reg, offset) = (self.decode_register(), self.decode_register());
+                let offset = self.registers[offset]
+                    .as_place()
+                    .ok_or(Error::TypeMismatch)?;
+                if !self.registers[reg].is_null() {
+                    self.ip += offset;
+                }
+            }
+            JumpN => {
+                let (reg, offset) = (self.decode_register(), self.decode_register());
+                let offset = self.registers[offset]
+                    .as_place()
+                    .ok_or(Error::TypeMismatch)?;
+                if self.registers[reg].is_null() {
+                    self.ip += offset;
+                }
+            }
+
             Call => {
                 let reg = self.decode_register();
                 let target = self.registers[reg].as_place().ok_or(Error::TypeMismatch)?;
@@ -319,16 +338,6 @@ impl Vm {
                 self.bp = self.pop()?.as_place().ok_or(Error::TypeMismatch)? as isize;
                 self.ip = self.pop()?.as_place().ok_or(Error::TypeMismatch)?;
                 self.sp = self.pop()?.as_place().ok_or(Error::TypeMismatch)? as isize;
-            }
-
-            JumpT => {
-                let (reg, offset) = (self.decode_register(), self.decode_register());
-                let offset = self.registers[offset]
-                    .as_place()
-                    .ok_or(Error::TypeMismatch)?;
-                if !self.registers[reg].is_null() {
-                    self.ip += offset;
-                }
             }
 
             Eqz => {
@@ -449,6 +458,16 @@ impl Vm {
                 let (reg, pair) = (self.decode_register(), self.decode_register());
                 let place = self.registers[pair].cdr().ok_or(Error::TypeMismatch)?;
                 self.registers[reg] = Value::Place(place as u32)
+            }
+            Cons => {
+                let (reg, car, cdr) = (
+                    self.decode_register(),
+                    self.decode_register(),
+                    self.decode_register(),
+                );
+                let car = self.registers[car].as_place().ok_or(Error::TypeMismatch)? as u32;
+                let cdr = self.registers[cdr].as_place().ok_or(Error::TypeMismatch)? as u32;
+                self.registers[reg] = Value::Pair(car, cdr)
             }
 
             PInc => {
@@ -621,6 +640,9 @@ impl Vm {
             JumpT => Ins::JumpT(self.decode_register() as u8, self.decode_register() as u8)
                 .to_string()
                 .okay(),
+            JumpN => Ins::JumpN(self.decode_register() as u8, self.decode_register() as u8)
+                .to_string()
+                .okay(),
 
             Call => Ins::Call(self.decode_register() as u8).to_string().okay(),
             Return => Ins::Return(self.decode_register() as u8).to_string().okay(),
@@ -739,6 +761,13 @@ impl Vm {
             Cdr => Ins::Cdr(self.decode_register() as u8, self.decode_register() as u8)
                 .to_string()
                 .okay(),
+            Cons => Ins::Cons(
+                self.decode_register() as u8,
+                self.decode_register() as u8,
+                self.decode_register() as u8,
+            )
+            .to_string()
+            .okay(),
 
             PInc => Ins::PInc(self.decode_register() as u8).to_string().okay(),
             PDec => Ins::PDec(self.decode_register() as u8).to_string().okay(),
@@ -785,6 +814,7 @@ pub enum Opcode {
     JumpB,
 
     JumpT,
+    JumpN,
 
     Call,
     Return,
@@ -811,6 +841,7 @@ pub enum Opcode {
 
     Car,
     Cdr,
+    Cons,
 
     PInc,
     PDec,
@@ -840,10 +871,11 @@ impl Opcode {
     const JUMPF: u8 = Self::JumpF as u8;
     const JUMPB: u8 = Self::JumpB as u8;
 
+    const JUMPT: u8 = Self::JumpT as u8;
+    const JUMPN: u8 = Self::JumpN as u8;
+
     const CALL: u8 = Self::Call as u8;
     const RETURN: u8 = Self::Return as u8;
-
-    const JUMPT: u8 = Self::JumpT as u8;
 
     const EQZ: u8 = Self::Eqz as u8;
     const NEZ: u8 = Self::Nez as u8;
@@ -867,6 +899,7 @@ impl Opcode {
 
     const CAR: u8 = Self::Car as u8;
     const CDR: u8 = Self::Cdr as u8;
+    const CONS: u8 = Self::Cons as u8;
 
     const PINC: u8 = Self::PInc as u8;
     const PDEC: u8 = Self::PDec as u8;
@@ -901,10 +934,11 @@ impl From<u8> for Opcode {
             Self::JUMPF => JumpF,
             Self::JUMPB => JumpB,
 
+            Self::JUMPT => JumpT,
+            Self::JUMPN => JumpN,
+
             Self::CALL => Call,
             Self::RETURN => Return,
-
-            Self::JUMPT => JumpT,
 
             Self::EQZ => Eqz,
             Self::NEZ => Nez,
@@ -928,6 +962,7 @@ impl From<u8> for Opcode {
 
             Self::CAR => Car,
             Self::CDR => Cdr,
+            Self::CONS => Cons,
 
             Self::PINC => PInc,
             Self::PDEC => PDec,

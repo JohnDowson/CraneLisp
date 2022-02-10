@@ -160,10 +160,11 @@ pub enum Ins {
     JumpF(u8),
     JumpB(u8),
 
+    JumpT(u8, u8),
+    JumpN(u8, u8),
+
     Call(u8),
     Return(u8),
-
-    JumpT(u8, u8),
 
     Eqz(u8, u8),
     Nez(u8, u8),
@@ -186,6 +187,7 @@ pub enum Ins {
 
     Car(u8, u8),
     Cdr(u8, u8),
+    Cons(u8, u8, u8),
 
     PInc(u8),
     PDec(u8),
@@ -219,10 +221,11 @@ impl std::fmt::Display for Ins {
             Ins::JumpF(t) => write!(f, "JumpF ${}", t),
             Ins::JumpB(t) => write!(f, "JumpB ${}", t),
 
+            Ins::JumpT(reg, t) => write!(f, "JumpT ${} ${}", reg, t),
+            Ins::JumpN(reg, t) => write!(f, "JumpN ${} ${}", reg, t),
+
             Ins::Call(t) => write!(f, "Call ${}", t),
             Ins::Return(t) => write!(f, "Return ${}", t),
-
-            Ins::JumpT(reg, t) => write!(f, "JumpT ${} ${}", reg, t),
 
             Ins::Eqz(reg, a) => write!(f, "Eq ${} ${}", reg, a),
             Ins::Nez(reg, a) => write!(f, "Ne ${} ${}", reg, a),
@@ -245,14 +248,15 @@ impl std::fmt::Display for Ins {
 
             Ins::Car(reg, pair) => write!(f, "Car ${} ${}", reg, pair),
             Ins::Cdr(reg, pair) => write!(f, "Cdr ${} ${}", reg, pair),
+            Ins::Cons(reg, car, cdr) => write!(f, "Cons ${} ${} ${}", reg, car, cdr),
 
             Ins::PInc(reg) => write!(f, "PInc ${}", reg),
             Ins::PDec(reg) => write!(f, "PDec ${} ", reg),
             Ins::POffset(reg, offset) => write!(f, "POffset ${} ${}", reg, offset),
             Ins::PIOffset(reg, offset) => write!(f, "PIOffset ${} #{}", reg, offset),
 
-            Ins::Label(l) => write!(f, "Label {:?}", l),
-            Ins::LoadLabel(reg, l) => write!(f, "LoadLabel ${} @{:?}", reg, l),
+            Ins::Label(l) => write!(f, "Label @{}:", l.0),
+            Ins::LoadLabel(reg, l) => write!(f, "LoadLabel ${} @{}", reg, l.0),
         }
     }
 }
@@ -330,18 +334,23 @@ impl Ins {
                 res.push(t);
             }
 
+            Ins::JumpT(reg, t) => {
+                res.push(Oc::JUMPT);
+                res.push(reg);
+                res.push(t);
+            }
+            Ins::JumpN(reg, t) => {
+                res.push(Oc::JUMPN);
+                res.push(reg);
+                res.push(t);
+            }
+
             Ins::Call(t) => {
                 res.push(Oc::CALL);
                 res.push(t);
             }
             Ins::Return(t) => {
                 res.push(Oc::RETURN);
-                res.push(t);
-            }
-
-            Ins::JumpT(reg, t) => {
-                res.push(Oc::JUMPT);
-                res.push(reg);
                 res.push(t);
             }
 
@@ -452,6 +461,12 @@ impl Ins {
                 res.push(reg);
                 res.push(pair);
             }
+            Ins::Cons(reg, car, cdr) => {
+                res.push(Oc::CONS);
+                res.push(reg);
+                res.push(car);
+                res.push(cdr);
+            }
 
             Ins::PInc(reg) => {
                 res.push(Oc::PINC);
@@ -500,10 +515,11 @@ impl Ins {
             Ins::JumpF(_) => 2,
             Ins::JumpB(_) => 2,
 
+            Ins::JumpT(_, _) => 3,
+            Ins::JumpN(_, _) => 3,
+
             Ins::Call(_) => 2,
             Ins::Return(_) => 2,
-
-            Ins::JumpT(_, _) => 3,
 
             Ins::Eqz(_, _) => 3,
             Ins::Nez(_, _) => 3,
@@ -527,6 +543,7 @@ impl Ins {
 
             Ins::Car(_, _) => 3,
             Ins::Cdr(_, _) => 3,
+            Ins::Cons(_, _, _) => 4,
 
             Ins::PInc(_) => 2,
             Ins::PDec(_) => 2,
