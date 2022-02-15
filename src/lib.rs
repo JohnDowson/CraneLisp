@@ -1,4 +1,8 @@
-#[macro_export]
+#![feature(box_into_inner)]
+#![feature(box_patterns)]
+#![feature(box_syntax)]
+#![feature(assert_matches)]
+
 macro_rules! syntax {
     ($kind:tt, $($spans:expr),+) => {
         {
@@ -21,74 +25,25 @@ macro_rules! syntax {
         }
     };
 }
-pub mod errors;
-pub mod eval;
-pub mod function;
-pub mod jit;
-pub mod lexer;
-pub mod parser;
 
-use std::{cell::RefCell, collections::BTreeSet};
+pub mod atom;
+pub mod errors;
+pub mod lexer;
+pub mod mem;
+pub mod parser;
+pub mod symbol;
+//pub mod vm2;
+pub mod vm;
 
 pub use errors::*;
-use eval::{value::Symbol, Atom};
-use once_cell::unsync::Lazy;
-use smol_str::SmolStr;
-use somok::{Leaksome, Somok};
+use slotmap::DefaultKey;
+
+use fnv::FnvBuildHasher;
+use indexmap::IndexSet;
+
+pub type EnvId = DefaultKey;
+pub type FnvIndexSet<T> = IndexSet<T, FnvBuildHasher>;
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
-
-static mut ENV: Lazy<RefCell<BTreeSet<Symbol>>> =
-    Lazy::new(|| RefCell::new(std::collections::BTreeSet::default()));
-
-pub fn dump_env() {
-    unsafe { println!("{:#?}", ENV.borrow()) }
-}
-
-pub fn intern(sym: SmolStr) -> SmolStr {
-    unsafe {
-        ENV.get_mut().insert(Symbol {
-            name: sym.clone(),
-            val: Atom::NULL.boxed().leak(),
-        });
-        sym
-    }
-}
-
-pub fn symbol_defined(sym: SmolStr) -> bool {
-    unsafe { ENV.borrow().contains(&Symbol::new(sym)) }
-}
-
-pub fn set_value(sym: Symbol) {
-    unsafe {
-        ENV.get_mut().replace(sym);
-    }
-}
-
-pub fn lookup_value(sym: SmolStr) -> Option<*mut Atom> {
-    unsafe {
-        ENV.get_mut()
-            .get(&Symbol {
-                name: sym,
-                val: Atom::NULL.boxed().leak(),
-            })
-            .map(|s| s.val)
-    }
-}
-trait TryRemove {
-    type Item;
-    fn try_remove(&mut self, i: usize) -> Option<Self::Item>;
-}
-impl<T> TryRemove for Vec<T> {
-    type Item = T;
-
-    fn try_remove(&mut self, i: usize) -> Option<Self::Item> {
-        if i < self.len() {
-            self.remove(i).some()
-        } else {
-            None
-        }
-    }
-}
 
 #[derive(Clone, Copy)]
 pub struct Span {
@@ -141,220 +96,5 @@ impl ariadne::Span for Span {
 
     fn end(&self) -> usize {
         self.end
-    }
-}
-
-#[allow(clippy::missing_safety_doc)]
-pub mod libcl {
-    use std::{
-        fs::{File, OpenOptions},
-        io::{BufRead, BufReader},
-        os::unix::prelude::{FromRawFd, IntoRawFd},
-    };
-
-    use crate::eval::value::{head, tail, Atom, CLString, ErrorCode::*, Tag};
-    use somok::{Leaksome, Somok};
-
-    #[no_mangle]
-    pub unsafe extern "C" fn car(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        if count != 1 {
-            return Atom::new_error(Arity).boxed().leak();
-        }
-        match (**atoms).tag {
-            Tag::Null => *atoms,
-            Tag::Pair => head(&**atoms),
-            _ => todo!(),
-        }
-    }
-
-    #[no_mangle]
-    pub unsafe extern "C" fn cdr(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        if count != 1 {
-            return Atom::new_error(Arity).boxed().leak();
-        }
-        match (**atoms).tag {
-            Tag::Null => *atoms,
-            Tag::Pair => tail(&**atoms),
-            _ => todo!(),
-        }
-    }
-
-    pub unsafe extern "C" fn cons(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        if count != 2 {
-            return Atom::new_error(Arity).boxed().leak();
-        }
-        let (a, b) = (*atoms, *atoms.add(1));
-
-        Atom::new_pair(crate::eval::value::cons(a, b).boxed().leak())
-            .boxed()
-            .leak()
-    }
-
-    pub unsafe extern "C" fn setf(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        if count != 2 {
-            return Atom::new_error(Arity).boxed().leak();
-        }
-        let (place, new) = (*atoms, **atoms.add(1));
-        *place = new;
-
-        new.boxed().leak()
-    }
-
-    #[no_mangle]
-    pub unsafe extern "C" fn cl_print(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        for i in 0..count {
-            let atom = &**atoms.add(i);
-            print!("{}", atom);
-        }
-        println!();
-        Atom::NULL.boxed().leak()
-    }
-    #[no_mangle]
-    pub unsafe extern "C" fn cl_eprint(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        for i in 0..count {
-            print!("{}", &**atoms.add(i));
-        }
-        println!();
-        Atom::NULL.boxed().leak()
-    }
-
-    #[no_mangle]
-    pub unsafe extern "C" fn cl_open(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        if count < 1 {
-            return Atom::new_error(Arity).boxed().leak();
-        }
-        let a = **atoms;
-        match a.tag {
-            Tag::String => {
-                let fd = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create(true)
-                    .open(a.as_string())
-                    .unwrap()
-                    .into_raw_fd();
-                Atom::new_port(fd).boxed().leak()
-            }
-            _ => Atom::new_error(Type).boxed().leak(),
-        }
-    }
-
-    #[no_mangle]
-    pub unsafe extern "C" fn cl_close(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        if count < 1 {
-            return Atom::new_error(Arity).boxed().leak();
-        }
-        let a = **atoms;
-        match a.tag {
-            Tag::Port => {
-                File::from_raw_fd(a.as_port());
-                Atom::NULL.boxed().leak()
-            }
-            _ => Atom::new_error(Type).boxed().leak(),
-        }
-    }
-
-    #[no_mangle]
-    pub unsafe extern "C" fn cl_readline(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        if count < 1 {
-            return Atom::new_error(Arity).boxed().leak();
-        }
-        let a = **atoms;
-        match a.tag {
-            Tag::Port => {
-                let file = File::from_raw_fd(a.as_port());
-                let s = BufReader::new(file).lines().next().unwrap().unwrap();
-                Atom::new_string(CLString::from_string(s)).boxed().leak()
-            }
-            _ => Atom::new_error(Type).boxed().leak(),
-        }
-    }
-
-    #[no_mangle]
-    pub unsafe extern "C" fn cl_alloc_value(_: usize, _: *mut *mut Atom) -> *mut Atom {
-        Atom::NULL.boxed().leak()
-    }
-
-    #[no_mangle]
-    pub unsafe extern "C" fn add(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        if count < 2 {
-            return Atom::new_error(Arity).boxed().leak();
-        }
-
-        let mut a = **atoms;
-
-        for i in 1..count {
-            let b = **(atoms.add(i));
-            a = match (a.tag, b.tag) {
-                (Tag::Int, Tag::Int) => Atom::new_int(a.as_int() + b.as_int()),
-                (Tag::Int, Tag::Float) => Atom::new_int(a.as_int() + b.as_float() as i64),
-                (Tag::Float, Tag::Int) => Atom::new_float(a.as_float() + b.as_int() as f64),
-                (Tag::Float, Tag::Float) => Atom::new_float(a.as_float() + b.as_float()),
-                _ => panic!("Can't add non-numbers {:?} + {:?}", a, b),
-            };
-        }
-        a.boxed().leak()
-    }
-
-    #[no_mangle]
-    pub unsafe extern "C" fn sub(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        if count < 2 {
-            return Atom::new_error(Arity).boxed().leak();
-        }
-
-        let mut a = **atoms;
-
-        for i in 1..count {
-            let b = **atoms.add(i);
-            a = match (a.tag, b.tag) {
-                (Tag::Int, Tag::Int) => Atom::new_int(a.as_int() - b.as_int()),
-                (Tag::Int, Tag::Float) => Atom::new_int(a.as_int() - b.as_float() as i64),
-                (Tag::Float, Tag::Int) => Atom::new_float(a.as_float() - b.as_int() as f64),
-                (Tag::Float, Tag::Float) => Atom::new_float(a.as_float() - b.as_float()),
-                _ => panic!("Can't sutract non-numbers {:?} + {:?}", a, b),
-            };
-        }
-        a.boxed().leak()
-    }
-
-    #[no_mangle]
-    pub unsafe extern "C" fn less_than(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        if count < 2 {
-            return Atom::new_error(Arity).boxed().leak();
-        }
-
-        let mut a = **atoms;
-
-        for i in 1..count {
-            let b = **atoms.add(i);
-            a = match (a.tag, b.tag) {
-                (Tag::Int, Tag::Int) => Atom::new_bool(a.as_int() < b.as_int()),
-                (Tag::Int, Tag::Float) => Atom::new_bool(a.as_int() < b.as_float() as i64),
-                (Tag::Float, Tag::Int) => Atom::new_bool(a.as_float() < b.as_int() as f64),
-                (Tag::Float, Tag::Float) => Atom::new_bool(a.as_float() < b.as_float()),
-                _ => panic!("Can't compare non-numbers {:?} + {:?}", a, b),
-            };
-        }
-        a.boxed().leak()
-    }
-
-    #[no_mangle]
-    pub unsafe extern "C" fn more_than(count: usize, atoms: *mut *mut Atom) -> *mut Atom {
-        if count < 2 {
-            return Atom::new_error(Arity).boxed().leak();
-        }
-        let mut a = **atoms;
-
-        for i in 1..count {
-            let b = **atoms.add(i);
-            a = match (a.tag, b.tag) {
-                (Tag::Int, Tag::Int) => Atom::new_bool(a.as_int() > b.as_int()),
-                (Tag::Int, Tag::Float) => Atom::new_bool(a.as_int() > b.as_float() as i64),
-                (Tag::Float, Tag::Int) => Atom::new_bool(a.as_float() > b.as_int() as f64),
-                (Tag::Float, Tag::Float) => Atom::new_bool(a.as_float() > b.as_float()),
-                _ => panic!("Can't compare non-numbers {:?} + {:?}", a, b),
-            };
-        }
-        a.boxed().leak()
     }
 }

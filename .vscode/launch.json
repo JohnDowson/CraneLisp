@@ -23,7 +23,6 @@
                 "settings set target.x86-disassembly-flavor intel"
             ],
             "args": [
-                "./file.crl"
             ],
             "cwd": "${workspaceFolder}"
         },

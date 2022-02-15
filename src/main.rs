@@ -5,7 +5,7 @@ use repl::{eval_source, repl};
 use std::fmt::Debug;
 mod repl;
 
-#[derive(clap::Parser)]
+#[derive(Parser)]
 struct Args {
     #[clap(short, long)]
     time: bool,
@@ -47,7 +47,7 @@ pub fn provide_diagnostic(error: &CranelispError, program: impl Into<ariadne::So
         }
         CranelispError::IO(_) => todo!("IO"),
         CranelispError::EOF => {}
-        CranelispError::UnexpectedEOF(_, _) => todo!("UnexpectedEOF"),
+        CranelispError::UnexpectedEOF => eprintln!("Unexpected EOF"),
         CranelispError::ReplIO(_) => todo!("IO"),
         CranelispError::Eval(e) => {
             let spans = e.spans();
@@ -57,40 +57,6 @@ pub fn provide_diagnostic(error: &CranelispError, program: impl Into<ariadne::So
                 report = report.with_label(Label::new(span).with_message(msg))
             }
             report.finish().eprint(program.into()).unwrap();
-        }
-        CranelispError::JIT(e) => todo!("{:#?}", e),
-        CranelispError::Optimizer(e) => todo!("{:#?}", e),
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::{lexer::Lexer, CranelispError};
-    #[test]
-    fn invalid_numeric_literal() {
-        let progs = ["1/1", "2a", "3.b"];
-
-        for prog in progs {
-            let mut lexer = Lexer::new(prog.into()).unwrap();
-            assert!(matches!(
-                lexer.next_token(),
-                Err(CranelispError::Syntax(..))
-            ))
-        }
-    }
-
-    #[test]
-    fn number_in_list() {
-        let prog = "(1.1 2 .3 4.)".into();
-        let tokens = Lexer::new(prog)
-            .unwrap()
-            .collect()
-            .into_iter()
-            .filter(|t| !t.is_whitespace() && !t.is_eof())
-            .collect::<Vec<_>>();
-        let expected = ["(", "(1.1)", "(2)", "(0.3)", "(4.0)", ")"];
-        for (i, &expect) in expected.iter().enumerate() {
-            assert_eq!(format!("{:?}", tokens[i]), expect)
         }
     }
 }

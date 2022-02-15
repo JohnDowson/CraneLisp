@@ -9,24 +9,16 @@ use crate::{Result, Span};
 pub enum CranelispError {
     #[error("Syntax error {0:?}")]
     Syntax(SyntaxError),
-    //#[error("Type error {0}")]
-    //Type(String),
-    //#[error("Lookup error {0}")]
-    //Lookup(String),
     #[error("{0}")]
     IO(#[from] std::io::Error),
     #[error("EOF")]
     EOF,
-    #[error("Unexpected EOF: expected {1}")]
-    UnexpectedEOF(Span, String),
+    #[error("Unexpected EOF")]
+    UnexpectedEOF,
     #[error("Couldn't get input: {0}")]
     ReplIO(#[from] rustyline::error::ReadlineError),
     #[error("")]
     Eval(EvalError),
-    #[error("Jit error: {0}")]
-    JIT(#[from] cranelift_module::ModuleError),
-    #[error("Jit error: {0}")]
-    Optimizer(#[from] cranelift::codegen::CodegenError),
 }
 
 pub fn syntax<T>(error: SyntaxError) -> Result<T> {
@@ -42,6 +34,7 @@ pub enum EvalError {
     Undefined(String, Span),
     ArityMismatch,
     InvalidSignature(String),
+    UnexpectedAtom(Span, String),
 }
 
 impl Display for EvalError {
@@ -51,6 +44,7 @@ impl Display for EvalError {
             EvalError::Undefined(_, _) => write!(f, "Undefined"),
             EvalError::ArityMismatch => write!(f, "ArityMismatch"),
             EvalError::InvalidSignature(_) => write!(f, "InvalidSignature"),
+            EvalError::UnexpectedAtom(_, _) => write!(f, "UnexpectedAtom"),
         }
     }
 }
@@ -65,6 +59,7 @@ impl Spans for &EvalError {
             EvalError::Undefined(msg, span) => vec![(*span, msg.clone())],
             EvalError::ArityMismatch => panic!("arity mismatch"),
             EvalError::InvalidSignature(_) => todo!(),
+            EvalError::UnexpectedAtom(span, msg) => vec![(*span, msg.clone())],
         }
     }
 }
@@ -88,6 +83,7 @@ pub enum SyntaxErrorKind {
     InvalidLiteral,
     UnexpectedToken,
     UnexpectedExpression,
+    UnexpectedRParen,
 
     FunctionHasNoBody,
     FunctionHasNoArglist,

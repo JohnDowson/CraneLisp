@@ -1,6 +1,6 @@
 use std::{fs::File, io::Read, time::Instant};
 
-use cranelisp::jit::Jit;
+use cranelisp::vm::{self, asm, translate::Translator, Op};
 use rustyline::{
     validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
     Config, EditMode,
@@ -22,9 +22,7 @@ impl Validator for InputValidator {
     }
 }
 
-pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
-    let mut jit = Jit::new(clir);
-
+pub fn repl(time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
     let h = InputValidator {
         brackets: MatchingBracketValidator::new(),
     };
@@ -35,19 +33,14 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
         .build();
     let mut rl = Editor::with_config(config);
     rl.set_helper(Some(h));
+
     loop {
         let src = rl.readline("> ")?;
         if let "q\n" = &*src {
             break;
         }
         let t1 = Instant::now();
-        let mut lexer = match Lexer::new(src.clone()) {
-            Ok(l) => l,
-            Err(e) => {
-                provide_diagnostic(&e, src);
-                continue;
-            }
-        };
+        let mut lexer = Lexer::new(&src);
         if tt {
             println!("{:?}", lexer.collect());
             lexer.rewind()
@@ -63,40 +56,43 @@ pub fn repl(time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
         if ast {
             println!("{:#?}", tree);
         }
+        let mut translator = Translator::new();
+        println!("{}", translator.translate_toplevel(&tree).is_ok());
+        let (code, const_table, symbol_table) = translator.emit();
+        println!("{code:?}");
+        let (code, const_table, symbol_table) = asm::assemble(code, const_table, symbol_table);
+        println!("{code:?}");
+        println!("{const_table:?}");
+        let decode: Vec<_> = code
+            .chunks(8)
+            .map(|c| c.try_into().map(Op::from_be_bytes).unwrap().unwrap())
+            .collect();
+        println!("{decode:?}");
 
-        match { crate::eval::eval(tree, &mut jit) } {
-            Ok(v) => println!(": {:?}", v),
-            Err(e) => {
-                provide_diagnostic(&e, src);
-                continue;
-            }
-        };
+        let mut vm = vm::Vm::new(code, const_table, symbol_table);
+        let mut halt = false;
+        while !halt {
+            halt = vm.execute().unwrap();
+        }
+        println!("{:?}", vm.stack);
 
         let t2 = Instant::now();
         if time {
-            println!("{:?}", t2 - t1);
+            println!("total time: {:?}", t2 - t1);
         }
     }
     Ok(())
 }
 
-pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> Result<()> {
+pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
     let src = {
         let mut buf = String::new();
         File::open(prog)?.read_to_string(&mut buf)?;
         buf
     };
 
-    let mut jit = Jit::new(clir);
-
     let t1 = Instant::now();
-    let mut lexer = match Lexer::new(src.clone()) {
-        Ok(l) => l,
-        Err(e) => {
-            provide_diagnostic(&e, src);
-            return e.error();
-        }
-    };
+    let mut lexer = Lexer::new(&src);
     if tt {
         println!("{:?}", lexer.collect());
         lexer.rewind()
@@ -111,17 +107,11 @@ pub fn eval_source(prog: &str, time: bool, ast: bool, tt: bool, clir: bool) -> R
             }
         };
         if ast {
-            println!("{:#?}", tree);
+            println!("{:?}", tree);
         }
 
         let t1 = Instant::now();
-        match crate::eval::eval(tree, &mut jit) {
-            Ok(v) => println!(": {:?}", v),
-            Err(e) => {
-                provide_diagnostic(&e, src);
-                return e.error();
-            }
-        };
+
         let t2 = Instant::now();
         if time {
             println!("exec time {:?}", t2 - t1);

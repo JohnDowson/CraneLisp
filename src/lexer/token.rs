@@ -1,51 +1,55 @@
-use smol_str::SmolStr;
-
 use crate::Span;
 use std::fmt::Debug;
 
-pub enum Token {
+pub enum Token<'s> {
     LParen(Span),
     RParen(Span),
     Float(f64, Span),
     Integer(i64, Span),
-    Symbol(SmolStr, Span),
-    String(String, Span),
-    Quote(Span),
-    TypeSeparator(Span),
+    Bool(bool, Span),
+    Symbol(&'s str, Span),
+    String(&'s str, Span),
     Eof(Span),
     Whitespace(Span),
+    Quote(Span),
+    Paste(Span),
+    Quasi(Span),
 }
 
-impl Debug for Token {
+impl<'s> Debug for Token<'s> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LParen(..) => write!(f, "("),
             Self::RParen(..) => write!(f, ")"),
             Self::Float(float, ..) => write!(f, "{:?}", float),
             Self::Integer(int, ..) => write!(f, "{:?}", int),
-            Self::Symbol(sym, ..) => write!(f, "{:?}", sym),
-            Self::String(str, ..) => write!(f, "\"{:?}\"", str),
-            Self::Quote(..) => write!(f, "'"),
-            Self::TypeSeparator(..) => write!(f, ":"),
+            Self::Bool(b, ..) => write!(f, "{:?}", b),
+            Self::Symbol(sym, ..) => write!(f, "{}", sym),
+            Self::String(str, ..) => write!(f, "\"{}\"", str),
             Self::Eof(..) => write!(f, "Eof"),
             Self::Whitespace(..) => write!(f, " "),
+            Self::Paste(_) => write!(f, ",P"),
+            Self::Quote(..) => write!(f, "'Q"),
+            Self::Quasi(_) => write!(f, "`U"),
         }
     }
 }
 
-impl Token {
+impl<'s> Token<'s> {
     pub fn span(&self) -> Span {
         *match self {
             Token::LParen(span) => span,
             Token::RParen(span) => span,
             Token::Float(_, span) => span,
             Token::Integer(_, span) => span,
+            Token::Bool(_, span) => span,
             Token::Symbol(_, span) => span,
             Token::String(_, span) => span,
-            Token::Quote(span) => span,
-            Token::TypeSeparator(span) => span,
             Token::Eof(span) => span,
             Token::Whitespace(span) => span,
+            Token::Quote(span) => span,
+            Token::Paste(span) => span,
+            Token::Quasi(span) => span,
         }
     }
     pub fn extract_float(&self) -> f64 {
@@ -60,15 +64,15 @@ impl Token {
             _ => panic!(),
         }
     }
-    pub fn extract_symbol(&self) -> SmolStr {
+    pub fn extract_symbol(&self) -> &'s str {
         match self {
-            Self::Symbol(s, ..) => s.clone(),
+            Self::Symbol(s, ..) => *s,
             _ => panic!(),
         }
     }
-    pub fn extract_string(&self) -> String {
+    pub fn extract_string(&self) -> &'s str {
         match self {
-            Self::String(s, ..) => s.clone(),
+            Self::String(s, ..) => *s,
             _ => panic!(),
         }
     }
@@ -127,13 +131,6 @@ impl Token {
     /// [`Quote`]: Token::Quote
     pub fn is_quote(&self) -> bool {
         matches!(self, Self::Quote(..))
-    }
-
-    /// Returns `true` if the token is [`TypeSeparator`].
-    ///
-    /// [`TypeSeparator`]: Token::TypeSeparator
-    pub fn is_type_separator(&self) -> bool {
-        matches!(self, Self::TypeSeparator(..))
     }
 
     /// Returns `true` if the token is [`Eof`].
