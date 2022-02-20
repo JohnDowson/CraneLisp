@@ -5,6 +5,7 @@ use somok::Somok;
 
 pub mod expr;
 
+#[derive(Debug)]
 pub struct Parser<'l, 's> {
     lexer: &'l mut Lexer<'s>,
 }
@@ -28,8 +29,6 @@ impl<'l, 's, 'p> Parser<'l, 's> {
                 let expr = Expr::Integer(i, span);
                 expr.okay()
             }
-
-            Token::Bool(b, span) => Expr::Bool(b, span).okay(),
 
             token @ Token::LParen(..) => self.parse_list(token),
 
@@ -92,13 +91,13 @@ impl<'l, 's, 'p> Parser<'l, 's> {
         }
         let mut exprs = Vec::new();
         let end = loop {
-            let expr = self.parse_expr()?;
-            exprs.push(expr);
-
+            self.skip_whitespace()?;
             if let Token::RParen(span) = self.lexer.peek_token()? {
                 self.lexer.next_token()?;
                 break span;
             }
+            let expr = self.parse_expr();
+            exprs.push(expr?);
         };
         Expr::List(exprs, Span::merge(start, end)).okay()
     }

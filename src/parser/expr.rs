@@ -5,10 +5,9 @@ use std::fmt::{Debug, Display};
 pub enum Expr<'s> {
     Symbol(&'s str, Span),
     Float(f64, Span),
-    Integer(i64, Span),
+    Integer(i32, Span),
     List(Vec<Expr<'s>>, Span),
     String(&'s str, Span),
-    Bool(bool, Span),
     Null(Span),
 }
 
@@ -27,7 +26,6 @@ impl<'s> Debug for Expr<'s> {
                 Self::String(arg0, arg1) => {
                     f.debug_tuple("String").field(arg0).field(arg1).finish()
                 }
-                Self::Bool(arg0, arg1) => f.debug_tuple("Bool").field(arg0).field(arg1).finish(),
                 Self::Null(span) => f.debug_tuple("Null").field(span).finish(),
             }
         } else {
@@ -37,7 +35,6 @@ impl<'s> Debug for Expr<'s> {
                 Self::Integer(arg0, ..) => f.debug_tuple("Integer").field(arg0).finish(),
                 Self::List(arg0, ..) => f.debug_tuple("List").field(arg0).finish(),
                 Self::String(arg0, ..) => f.debug_tuple("String").field(arg0).finish(),
-                Self::Bool(arg0, ..) => f.debug_tuple("Bool").field(arg0).finish(),
                 Self::Null(..) => write!(f, "Null"),
             }
         }
@@ -52,7 +49,6 @@ impl<'s> Display for Expr<'s> {
             Expr::Integer(_, _) => write!(f, "Integer"),
             Expr::List(_, _) => write!(f, "List"),
             Expr::String(_, _) => write!(f, "String"),
-            Expr::Bool(_, _) => write!(f, "Bool"),
             Expr::Null(_) => write!(f, "Null"),
         }
     }
@@ -66,7 +62,6 @@ impl<'s> Expr<'s> {
             Expr::Integer(_, m) => m,
             Expr::List(_, m) => m,
             Expr::String(_, m) => m,
-            Expr::Bool(_, m) => m,
             Expr::Null(m) => m,
         }
     }

@@ -5,8 +5,7 @@ pub enum Token<'s> {
     LParen(Span),
     RParen(Span),
     Float(f64, Span),
-    Integer(i64, Span),
-    Bool(bool, Span),
+    Integer(i32, Span),
     Symbol(&'s str, Span),
     String(&'s str, Span),
     Eof(Span),
@@ -23,7 +22,6 @@ impl<'s> Debug for Token<'s> {
             Self::RParen(..) => write!(f, ")"),
             Self::Float(float, ..) => write!(f, "{:?}", float),
             Self::Integer(int, ..) => write!(f, "{:?}", int),
-            Self::Bool(b, ..) => write!(f, "{:?}", b),
             Self::Symbol(sym, ..) => write!(f, "{}", sym),
             Self::String(str, ..) => write!(f, "\"{}\"", str),
             Self::Eof(..) => write!(f, "Eof"),
@@ -42,7 +40,6 @@ impl<'s> Token<'s> {
             Token::RParen(span) => span,
             Token::Float(_, span) => span,
             Token::Integer(_, span) => span,
-            Token::Bool(_, span) => span,
             Token::Symbol(_, span) => span,
             Token::String(_, span) => span,
             Token::Eof(span) => span,
@@ -58,7 +55,7 @@ impl<'s> Token<'s> {
             _ => panic!(),
         }
     }
-    pub fn extract_integer(&self) -> i64 {
+    pub fn extract_integer(&self) -> i32 {
         match self {
             Self::Integer(i, ..) => *i,
             _ => panic!(),

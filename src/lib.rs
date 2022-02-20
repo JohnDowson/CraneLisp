@@ -2,6 +2,7 @@
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(assert_matches)]
+#![feature(destructuring_assignment)]
 
 macro_rules! syntax {
     ($kind:tt, $($spans:expr),+) => {

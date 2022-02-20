@@ -51,6 +51,7 @@ name = "cl-alloc"
 version = "0.1.0"
 dependencies = [
  "somok",
+ "tinyvec",
 ]
 
 [[package]]

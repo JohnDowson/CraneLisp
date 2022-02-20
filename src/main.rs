@@ -58,5 +58,12 @@ pub fn provide_diagnostic(error: &CranelispError, program: impl Into<ariadne::So
             }
             report.finish().eprint(program.into()).unwrap();
         }
+        CranelispError::CompileError(e) => {
+            let mut report = Report::build(ReportKind::Error, (), 0).with_message(e.to_string());
+
+            report = report.with_label(Label::new(e.span));
+
+            report.finish().eprint(program.into()).unwrap();
+        }
     }
 }

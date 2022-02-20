@@ -3,6 +3,7 @@ use std::fmt::Display;
 
 use somok::Somok;
 
+use crate::vm::translate;
 use crate::{Result, Span};
 
 #[derive(Debug, thiserror::Error)]
@@ -19,6 +20,8 @@ pub enum CranelispError {
     ReplIO(#[from] rustyline::error::ReadlineError),
     #[error("")]
     Eval(EvalError),
+    #[error("{0}")]
+    CompileError(#[from] translate::Error),
 }
 
 pub fn syntax<T>(error: SyntaxError) -> Result<T> {

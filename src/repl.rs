@@ -1,6 +1,5 @@
-use std::{fs::File, io::Read, time::Instant};
-
-use cranelisp::vm::{self, asm, translate::Translator, Op};
+use crate::{lexer::Lexer, parser::Parser, provide_diagnostic, Result};
+use cranelisp::vm::{self, asm, translate::Translator};
 use rustyline::{
     validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
     Config, EditMode,
@@ -8,8 +7,7 @@ use rustyline::{
 use rustyline::{Editor, Result as RLResult};
 use rustyline_derive::{Completer, Helper, Highlighter, Hinter};
 use somok::Somok;
-
-use crate::{lexer::Lexer, parser::Parser, provide_diagnostic, Result};
+use std::{fs::File, io::Read, time::Instant};
 
 #[derive(Completer, Helper, Highlighter, Hinter)]
 struct InputValidator {
@@ -57,28 +55,33 @@ pub fn repl(time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
             println!("{:#?}", tree);
         }
         let mut translator = Translator::new();
-        println!("{}", translator.translate_toplevel(&tree).is_ok());
-        let (code, const_table, symbol_table) = translator.emit();
-        println!("{code:?}");
-        let (code, const_table, symbol_table) = asm::assemble(code, const_table, symbol_table);
-        println!("{code:?}");
-        println!("{const_table:?}");
-        let decode: Vec<_> = code
-            .chunks(8)
-            .map(|c| c.try_into().map(Op::from_be_bytes).unwrap().unwrap())
-            .collect();
-        println!("{decode:?}");
+        match translator.translate_toplevel(&tree) {
+            Ok(()) => (),
+            Err(e) => {
+                provide_diagnostic(&e.into(), src);
+                continue;
+            }
+        }
+        let (closures, symbol_table) = translator.emit();
+        // println!("{closures:?}");
+        let funcs = asm::assemble(closures);
+        // println!("{funcs:?}");
 
-        let mut vm = vm::Vm::new(code, const_table, symbol_table);
+        let t2 = Instant::now();
+
+        let mut vm = vm::Vm::new(funcs.get(&0).unwrap().clone(), symbol_table);
+
         let mut halt = false;
         while !halt {
             halt = vm.execute().unwrap();
         }
         println!("{:?}", vm.stack);
 
-        let t2 = Instant::now();
+        let t3 = Instant::now();
         if time {
-            println!("total time: {:?}", t2 - t1);
+            println!("compile time: {:?}", t2 - t1);
+            println!("run time: {:?}", t3 - t2);
+            println!("total time: {:?}", t3 - t1);
         }
     }
     Ok(())

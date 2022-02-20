@@ -1,10 +1,18 @@
+use std::rc::Rc;
+
+use crate::vm::{
+    atom2::{Object, Tag},
+    memman::alloc,
+};
+
+use self::{atom2::Atom, closure::RuntimeFn, memman::sweep};
 use smol_str::SmolStr;
 use somok::Somok;
 
-use crate::atom::Atom;
-
 pub mod asm;
+pub mod atom2;
 pub mod closure;
+pub mod memman;
 pub mod translate;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -20,52 +28,58 @@ pub enum Error {
     CallStackUnderflow,
     StackNoValue,
     TypeMismatch(String),
+    UndefinedLocal,
     InvalidValueTag,
+    PlaceInvalid,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct Frame {
+    fp: Rc<RuntimeFn>,
     ip: isize,
     sp: isize,
     bp: isize,
 }
 
 pub struct Vm {
-    pub code: Vec<u8>,
-    // pub arg_regs: [Atom<0>; 32],
+    pub code: &'static [u8],
+    pub cf: Rc<RuntimeFn>,
     pub reminder: u64,
     pub ip: isize,
     pub call_stack: Vec<Frame>,
     pub sp: isize,
     pub bp: isize,
-    pub stack: Vec<Option<Atom<0>>>,
-    pub const_table: Vec<Atom<0>>,
+    pub stack: Vec<Option<Atom>>,
     pub symbol_table: Vec<SmolStr>,
 }
 
 impl Vm {
-    pub fn new(code: Vec<u8>, const_table: Vec<Atom<0>>, symbol_table: Vec<SmolStr>) -> Vm {
+    pub fn new(main: Rc<RuntimeFn>, symbol_table: Vec<SmolStr>) -> Self {
+        let code = main.assembly;
         Vm {
             code,
-            // arg_regs: [Atom::<0>::Null; 32],
+            cf: main,
             reminder: 0,
             ip: 0,
             call_stack: Vec::new(),
             sp: 0,
             bp: 0,
-            stack: vec![None; 16],
-            const_table,
+            stack: Vec::new(),
             symbol_table,
         }
     }
 
     pub fn execute(&mut self) -> Result<bool> {
-        let ip = self.ip;
         let op = self.decode()?;
-        println!("ip: {:?},\top: {:?}", ip, &op);
+        #[cfg(debug_assertions)]
+        {
+            let ip = self.ip;
+            println!("stack: {:?}", &self.stack);
+            println!("{:?}:\t {:?}", ip, &op);
+        }
         match op {
             Op::Push(id) => {
-                let constant = self.const_table[id as usize];
+                let constant = self.cf.const_table[id as usize];
                 self.push(constant)
             }
             Op::Pop => {
@@ -76,15 +90,30 @@ impl Vm {
                 self.stack[(self.bp + slot as isize) as usize] = val.some();
             }
             Op::LGet(slot) => {
-                let val = self.stack[(self.bp + slot as isize) as usize].unwrap();
+                let val =
+                    self.stack[(self.bp + slot as isize) as usize].ok_or(Error::UndefinedLocal)?;
                 self.push(val)
             }
-            Op::Jump(_) => todo!(),
-            Op::FJump(_) => todo!(),
-            Op::TJump(_) => todo!(),
+            Op::Jump(offset) => {
+                let offset = offset as isize;
+                self.ip += offset
+            }
+            Op::FJump(offset) => {
+                if !self.pop()?.truthy() {
+                    let offset = offset as isize;
+                    self.ip += offset
+                }
+            }
+            Op::TJump(offset) => {
+                if self.pop()?.truthy() {
+                    let offset = offset as isize;
+                    self.ip += offset
+                }
+            }
             Op::Call(argc) => self.call(argc)?,
             Op::Return => {
                 let frame = self.call_stack.pop().unwrap();
+                self.code = frame.fp.assembly;
                 self.ip = frame.ip;
                 self.sp = frame.sp + 1;
                 self.bp = frame.bp;
@@ -92,63 +121,136 @@ impl Vm {
             Op::Halt => return true.okay(),
             Op::Add => {
                 let (b, a) = (self.pop()?, self.pop()?);
-                let res = match (a, b) {
-                    (Atom::Int(a), Atom::Int(b)) => Atom::Int(a + b),
-                    (Atom::Int(a), Atom::Float(b)) => Atom::Int(a + b as i64),
-                    (Atom::Float(a), Atom::Int(b)) => Atom::Float(a + b as f64),
-                    (Atom::Float(a), Atom::Float(b)) => Atom::Float(a + b),
-                    _ => {
+                let res = match (a.get_tag(), b.get_tag()) {
+                    (Tag::Int, Tag::Int) => Atom::new_int(a.as_int() + b.as_int()),
+                    (Tag::Int, Tag::Uint) => Atom::new_int(a.as_int() + b.as_uint() as i32),
+                    (Tag::Int, Tag::Float) => Atom::new_int(a.as_int() + b.as_float() as i32),
+                    (Tag::Uint, Tag::Int) => Atom::new_uint(a.as_uint() + b.as_int() as u32),
+                    (Tag::Uint, Tag::Uint) => Atom::new_uint(a.as_uint() + b.as_uint()),
+                    (Tag::Uint, Tag::Float) => Atom::new_uint(a.as_uint() + b.as_float() as u32),
+                    (Tag::Float, Tag::Int) => Atom::new_float(a.as_float() + b.as_int() as f64),
+                    (Tag::Float, Tag::Uint) => Atom::new_float(a.as_float() + b.as_uint() as f64),
+                    (Tag::Float, Tag::Float) => Atom::new_float(a.as_float() + b.as_float()),
+                    (a_tag, b_tag) => {
                         return Error::TypeMismatch(format!(
                             "Expected (Float | Int, Float | Int), found ({:?}, {:?})",
-                            a, b
+                            a_tag, b_tag
                         ))
-                        .error()
+                        .error();
                     }
                 };
                 self.push(res);
             }
             Op::Sub => {
                 let (b, a) = (self.pop()?, self.pop()?);
-                let res = match (a, b) {
-                    (Atom::Int(a), Atom::Int(b)) => Atom::Int(a - b),
-                    (Atom::Int(a), Atom::Float(b)) => Atom::Int(a - b as i64),
-                    (Atom::Float(a), Atom::Int(b)) => Atom::Float(a - b as f64),
-                    (Atom::Float(a), Atom::Float(b)) => Atom::Float(a - b),
-                    _ => {
+                let res = match (a.get_tag(), b.get_tag()) {
+                    (Tag::Int, Tag::Int) => Atom::new_int(a.as_int() - b.as_int()),
+                    (Tag::Int, Tag::Uint) => Atom::new_int(a.as_int() - b.as_uint() as i32),
+                    (Tag::Int, Tag::Float) => Atom::new_int(a.as_int() - b.as_float() as i32),
+                    (Tag::Uint, Tag::Int) => Atom::new_uint(a.as_uint() - b.as_int() as u32),
+                    (Tag::Uint, Tag::Uint) => Atom::new_uint(a.as_uint() - b.as_uint()),
+                    (Tag::Uint, Tag::Float) => Atom::new_uint(a.as_uint() - b.as_float() as u32),
+                    (Tag::Float, Tag::Int) => Atom::new_float(a.as_float() - b.as_int() as f64),
+                    (Tag::Float, Tag::Uint) => Atom::new_float(a.as_float() - b.as_uint() as f64),
+                    (Tag::Float, Tag::Float) => Atom::new_float(a.as_float() - b.as_float()),
+                    (a_tag, b_tag) => {
                         return Error::TypeMismatch(format!(
                             "Expected (Float | Int, Float | Int), found ({:?}, {:?})",
-                            a, b
+                            a_tag, b_tag
                         ))
                         .error()
                     }
                 };
                 self.push(res);
-            } // Op::LReg(reg) => {
-              //     let val = self.arg_regs[reg as usize];
-              //     self.push(val)
-              // }
+            }
+            Op::Car => {
+                let atom = self.pop()?;
+
+                if let Tag::Obj = atom.get_tag() {
+                    let obj = unsafe { &*atom.as_obj() };
+                    if obj.is_pair() {
+                        self.push(obj.as_pair().car)
+                    } else {
+                        return Error::TypeMismatch(format!("Expected Pair, found {:?}", atom))
+                            .error();
+                    }
+                } else {
+                    return Error::TypeMismatch(format!("Expected Pair, found {:?}", atom)).error();
+                }
+            }
+            Op::Cdr => {
+                let atom = self.pop()?;
+
+                if let Tag::Obj = atom.get_tag() {
+                    let obj = unsafe { &*atom.as_obj() };
+                    if obj.is_pair() {
+                        self.push(obj.as_pair().cdr)
+                    } else {
+                        return Error::TypeMismatch(format!("Expected Pair, found {:?}", atom))
+                            .error();
+                    }
+                } else {
+                    return Error::TypeMismatch(format!("Expected Pair, found {:?}", atom)).error();
+                }
+            }
+            Op::Cons => {
+                let car = self.pop()?;
+                let cdr = self.pop()?;
+                let pair = self.alloc(Object::new_pair(car, cdr));
+                self.push(pair);
+            }
+            Op::NativeCall(argc) => {
+                let native = self.decode_native()?;
+                let mut args = Vec::new();
+                for _ in 0..argc {
+                    args.push(self.pop()?);
+                }
+                self.push(native(&args))
+            }
         }
         false.okay()
     }
 
+    fn alloc(&mut self, obj: Object) -> Atom {
+        let atom = Atom::new_obj(alloc(obj));
+        self.mark();
+        sweep();
+        atom
+    }
+
+    fn mark(&mut self) {
+        for atom in self.stack.iter_mut().flatten() {
+            atom.mark()
+        }
+    }
+
     fn call(&mut self, argc: u32) -> Result<()> {
         let atom = self.pop().unwrap();
-        if let Atom::Func(func) = atom {
-            self.ip -= argc as isize;
-            let frame = Frame {
-                ip: self.ip,
-                sp: self.sp,
-                bp: self.bp,
-            };
-            self.call_stack.push(frame);
-            self.ip = func as isize;
+        if let Tag::Obj = atom.get_tag() {
+            let obj = unsafe { &*atom.as_obj() };
+            if obj.is_func() {
+                let func = obj.as_func();
+                self.sp -= argc as isize;
+                let frame = Frame {
+                    fp: self.cf.clone(),
+                    ip: self.ip,
+                    sp: self.sp,
+                    bp: self.bp,
+                };
+                self.bp = self.sp;
+                self.sp = 0;
+                self.code = func.assembly;
+                self.cf = func;
+                self.call_stack.push(frame);
+                self.ip = 0;
+            }
         } else {
             return Error::TypeMismatch(format!("Expected Func, found {:?}", atom)).error();
         };
         ().okay()
     }
 
-    fn decode(&mut self) -> Result<Op> {
+    pub fn decode(&mut self) -> Result<Op> {
         let res = self.code[self.ip as usize..(self.ip + 8) as usize]
             .try_into()
             .map(Op::from_be_bytes)
@@ -157,12 +259,25 @@ impl Vm {
         res
     }
 
-    pub fn push(&mut self, val: Atom<0>) {
+    fn decode_native(&mut self) -> Result<fn(&[Atom]) -> Atom> {
+        let res = self.code[self.ip as usize..(self.ip + 8) as usize]
+            .try_into()
+            .map(usize::from_be_bytes)
+            .map_err(|_| Error::Illegal)?;
+        self.ip += 8;
+        unsafe { std::mem::transmute::<usize, fn(&[Atom]) -> Atom>(res) }.okay()
+    }
+
+    pub fn push(&mut self, val: Atom) {
         let asp = self.bp + self.sp;
         self.sp += 1;
-        self.stack[asp as usize] = val.some();
+        if asp >= self.stack.len() as isize {
+            self.stack.push(val.some());
+        } else {
+            self.stack[asp as usize] = val.some();
+        }
     }
-    pub fn pop(&mut self) -> Result<Atom<0>> {
+    pub fn pop(&mut self) -> Result<Atom> {
         self.sp -= 1;
         let asp = self.bp + self.sp;
         let mut res = None;
@@ -171,7 +286,7 @@ impl Vm {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Op {
     Push(u32),
     Pop,
@@ -189,7 +304,12 @@ pub enum Op {
 
     Add,
     Sub,
-    // LReg(u32),
+
+    Car,
+    Cdr,
+    Cons,
+
+    NativeCall(u32),
 }
 impl Op {
     pub fn from_be_bytes(bytes: [u8; 8]) -> Result<Self> {
@@ -248,14 +368,20 @@ impl Op {
             9 => Self::Halt,
             10 => Self::Add,
             11 => Self::Sub,
-            // 12 => {
-            //     let reg = bytes[4..]
-            //         .try_into()
-            //         .map(u32::from_be_bytes)
-            //         .map_err(|_| Error::Illegal)?;
-            //     Self::LReg(reg)
-            // }
-            12.. => return Error::Illegal.error(),
+
+            12 => Self::Car,
+            13 => Self::Cdr,
+            14 => Self::Cons,
+
+            15 => {
+                let argc = bytes[4..]
+                    .try_into()
+                    .map(u32::from_be_bytes)
+                    .map_err(|_| Error::Illegal)?;
+                Self::NativeCall(argc)
+            }
+
+            16.. => return Error::Illegal.error(),
         }
         .okay()
     }

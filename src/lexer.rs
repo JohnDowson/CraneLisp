@@ -88,7 +88,7 @@ impl<'s, 'l> Lexer<'s> {
                     number = [integer, decimal].join(".")
                 } else {
                     return Token::Integer(
-                        integer.parse::<i64>().map_err(|e| {
+                        integer.parse::<i32>().map_err(|e| {
                             syntax!(InvalidLiteral, (Span::new(start, self.next), e.to_string()))
                         })?,
                         Span::new(start, self.next),
@@ -245,14 +245,10 @@ impl<'s, 'l> Lexer<'s> {
 }
 
 impl<'s> Debug for Lexer<'s> {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-        writeln!(fmt, "next: {}:{:?}, in:", self.next, self.src[self.next])?;
-        for c in self.src.iter() {
-            write!(fmt, "{:?}, ", c)?
-        }
-        writeln!(fmt)?;
-        for (e, _) in self.src.iter().enumerate() {
-            write!(fmt, "{:03}, ", e)?
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        writeln!(f, "next: {}:{:?}, in:", self.next, self.src[self.next - 1])?;
+        for (e, c) in self.src.iter().enumerate() {
+            write!(f, "{}: {}", e, c)?
         }
         Ok(())
     }
