@@ -1,5 +1,5 @@
-use super::{asm::Ins, atom2::Atom};
-use crate::symbol::SymId;
+use super::{asm::Ins, atom::Atom};
+use crate::SymId;
 use fnv::FnvHashMap;
 
 pub type ConstTable = Vec<Atom>;

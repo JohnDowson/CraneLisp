@@ -27,13 +27,9 @@ macro_rules! syntax {
     };
 }
 
-pub mod atom;
 pub mod errors;
 pub mod lexer;
-pub mod mem;
 pub mod parser;
-pub mod symbol;
-//pub mod vm2;
 pub mod vm;
 
 pub use errors::*;
@@ -45,6 +41,9 @@ use indexmap::IndexSet;
 pub type EnvId = DefaultKey;
 pub type FnvIndexSet<T> = IndexSet<T, FnvBuildHasher>;
 pub type Result<T, E = CranelispError> = std::result::Result<T, E>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SymId(pub usize);
 
 #[derive(Clone, Copy)]
 pub struct Span {

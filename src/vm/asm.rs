@@ -1,6 +1,6 @@
 use super::{
-    atom2::Atom,
-    atom2::Object,
+    atom::Atom,
+    atom::Object,
     closure::{Closure, RuntimeFn},
     memman::alloc,
     Op,

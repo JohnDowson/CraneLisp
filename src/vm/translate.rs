@@ -1,12 +1,12 @@
 use std::fmt::Debug;
 
 use super::asm::Ins;
-use super::atom2::Atom;
+use super::atom::Atom;
 use super::closure::{Closure, Local, ReturnToPatch};
 use super::Op;
 use crate::parser::expr::Expr;
-use crate::symbol::SymId;
 use crate::Span;
+use crate::SymId;
 use smol_str::SmolStr;
 use somok::Somok;
 

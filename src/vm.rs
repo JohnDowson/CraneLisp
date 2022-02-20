@@ -1,16 +1,16 @@
 use std::rc::Rc;
 
 use crate::vm::{
-    atom2::{Object, Tag},
+    atom::{Object, Tag},
     memman::alloc,
 };
 
-use self::{atom2::Atom, closure::RuntimeFn, memman::sweep};
+use self::{atom::Atom, closure::RuntimeFn, memman::sweep};
 use smol_str::SmolStr;
 use somok::Somok;
 
 pub mod asm;
-pub mod atom2;
+pub mod atom;
 pub mod closure;
 pub mod memman;
 pub mod translate;

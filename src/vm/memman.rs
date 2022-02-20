@@ -1,4 +1,4 @@
-use super::atom2::Object;
+use super::atom::Object;
 use once_cell::unsync::Lazy;
 use std::alloc as sal;
 
