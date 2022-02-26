@@ -8,6 +8,7 @@ use crate::vm::{
 use self::{atom::Atom, closure::RuntimeFn, memman::sweep};
 use smol_str::SmolStr;
 use somok::Somok;
+use tinyvec::ArrayVec;
 
 pub mod asm;
 pub mod atom;
@@ -199,14 +200,6 @@ impl Vm {
                 let pair = self.alloc(Object::new_pair(car, cdr));
                 self.push(pair);
             }
-            Op::NativeCall(argc) => {
-                let native = self.decode_native()?;
-                let mut args = Vec::new();
-                for _ in 0..argc {
-                    args.push(self.pop()?);
-                }
-                self.push(native(&args))
-            }
         }
         false.okay()
     }
@@ -243,6 +236,13 @@ impl Vm {
                 self.cf = func;
                 self.call_stack.push(frame);
                 self.ip = 0;
+            } else if obj.is_native_func() {
+                let mut args: ArrayVec<[Atom; 256]> = ArrayVec::new();
+                let func = obj.as_native_func();
+                for _ in 0..argc {
+                    args.push(self.pop()?);
+                }
+                self.push(func(&args));
             }
         } else {
             return Error::TypeMismatch(format!("Expected Func, found {:?}", atom)).error();
@@ -257,15 +257,6 @@ impl Vm {
             .map_err(|_| Error::Illegal)?;
         self.ip += 8;
         res
-    }
-
-    fn decode_native(&mut self) -> Result<fn(&[Atom]) -> Atom> {
-        let res = self.code[self.ip as usize..(self.ip + 8) as usize]
-            .try_into()
-            .map(usize::from_be_bytes)
-            .map_err(|_| Error::Illegal)?;
-        self.ip += 8;
-        unsafe { std::mem::transmute::<usize, fn(&[Atom]) -> Atom>(res) }.okay()
     }
 
     pub fn push(&mut self, val: Atom) {
@@ -308,8 +299,6 @@ pub enum Op {
     Car,
     Cdr,
     Cons,
-
-    NativeCall(u32),
 }
 impl Op {
     pub fn from_be_bytes(bytes: [u8; 8]) -> Result<Self> {
@@ -373,15 +362,7 @@ impl Op {
             13 => Self::Cdr,
             14 => Self::Cons,
 
-            15 => {
-                let argc = bytes[4..]
-                    .try_into()
-                    .map(u32::from_be_bytes)
-                    .map_err(|_| Error::Illegal)?;
-                Self::NativeCall(argc)
-            }
-
-            16.. => return Error::Illegal.error(),
+            15.. => return Error::Illegal.error(),
         }
         .okay()
     }

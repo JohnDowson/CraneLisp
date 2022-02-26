@@ -1,14 +1,14 @@
 use std::fmt::Debug;
 
 use super::asm::Ins;
-use super::atom::Atom;
+use super::atom::{Atom, Object};
 use super::closure::{Closure, Local, ReturnToPatch};
 use super::Op;
 use crate::parser::expr::Expr;
 use crate::Span;
 use crate::SymId;
 use smol_str::SmolStr;
-use somok::Somok;
+use somok::{Leaksome, Somok};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -145,41 +145,50 @@ impl Translator {
                             }
                         }
                         "=" => {
-                            if rest.len() >= 2 {
-                                for arg in rest {
-                                    self.translate(arg)?;
-                                }
-                                self.native_call(rest.len() as u32, |atoms| {
-                                    let mut atoms = atoms.iter();
-                                    let first = atoms.next().unwrap();
-                                    if atoms.all(|a| first == a) {
-                                        Atom::new_int(1)
-                                    } else {
-                                        Atom::null()
-                                    }
-                                });
-                            } else {
-                                return error(ArityMismatch, *span);
+                            let argc = rest.len() as u32;
+                            for arg in rest {
+                                self.translate(arg)?;
                             }
+                            fn eq(atoms: &[Atom]) -> Atom {
+                                if atoms.windows(2).all(|a| {
+                                    if let [a, b] = a {
+                                        a == b
+                                    } else {
+                                        unreachable!()
+                                    }
+                                }) {
+                                    Atom::new_uint(1)
+                                } else {
+                                    Atom::null()
+                                }
+                            }
+                            self.push_const(Atom::new_obj(
+                                Object::new_native_func(eq).boxed().leak(),
+                            ));
+                            self.ins(Op::Call(argc))
                         }
                         "<" => {
-                            if let [a, b] = rest {
-                                self.translate(a)?;
-                                self.translate(b)?;
-                                self.native_call(2, |atoms| {
-                                    if let [a, b] = atoms {
-                                        if a < b {
-                                            Atom::new_int(1)
-                                        } else {
-                                            Atom::null()
-                                        }
-                                    } else {
-                                        Atom::undefined()
-                                    }
-                                });
-                            } else {
-                                return error(ArityMismatch, *span);
+                            let argc = rest.len() as u32;
+                            for arg in rest {
+                                self.translate(arg)?;
                             }
+                            fn lt(atoms: &[Atom]) -> Atom {
+                                if atoms.windows(2).all(|a| {
+                                    if let [a, b] = a {
+                                        a < b
+                                    } else {
+                                        unreachable!()
+                                    }
+                                }) {
+                                    Atom::new_uint(1)
+                                } else {
+                                    Atom::null()
+                                }
+                            }
+                            self.push_const(Atom::new_obj(
+                                Object::new_native_func(lt).boxed().leak(),
+                            ));
+                            self.ins(Op::Call(argc))
                         }
                         "loop" => {
                             if let [body] = rest {
@@ -486,11 +495,6 @@ impl Translator {
         let fid = self.next_func_id;
         self.next_func_id += 1;
         fid
-    }
-
-    fn native_call(&mut self, argc: u32, func: fn(&[Atom]) -> Atom) {
-        self.ins(Op::NativeCall(argc));
-        self.closure_mut().assembly.push(Ins::Native(func as usize));
     }
 }
 

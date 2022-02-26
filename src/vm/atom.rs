@@ -16,8 +16,42 @@ pub enum Tag {
     Float,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 pub struct Atom(u64);
+
+impl Default for Atom {
+    fn default() -> Self {
+        Self::undefined()
+    }
+}
+
+impl PartialEq for Atom {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.get_tag(), other.get_tag()) {
+            (Tag::NaN, _) => false,
+            (_, Tag::NaN) => false,
+            (Tag::Undefined, _) => false,
+            (_, Tag::Undefined) => false,
+            (Tag::Ptr, _) => false,
+            (_, Tag::Ptr) => false,
+            (Tag::Null, Tag::Null) => true,
+            (Tag::Null, _) => false,
+            (_, Tag::Null) => false,
+            (Tag::Int, Tag::Int) => self.as_int().eq(&other.as_int()),
+            (Tag::Int, _) => false,
+            (_, Tag::Int) => false,
+            (Tag::Uint, Tag::Uint) => self.as_uint().eq(&other.as_uint()),
+            (Tag::Uint, _) => false,
+            (_, Tag::Uint) => false,
+            (Tag::Obj, Tag::Obj) => unsafe { (&*self.as_obj()).eq(&*other.as_obj()) },
+            (Tag::Obj, _) => false,
+            (_, Tag::Obj) => false,
+            (Tag::Sym, _) => false,
+            (_, Tag::Sym) => false,
+            (Tag::Float, Tag::Float) => self.as_float().eq(&other.as_float()),
+        }
+    }
+}
 
 impl PartialOrd for Atom {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -81,6 +115,10 @@ impl Atom {
     const MASK_TYPE_OBJ: u64 = 0b101_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
     const MASK_TYPE_SYM: u64 = 0b110_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
     const MASK_TYPE_PTR: u64 = 0b111_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
+
+    pub fn bitwise_eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
 
     pub fn new_float(f: f64) -> Self {
         Self(f.to_bits())
@@ -204,6 +242,12 @@ pub struct Object {
     inner: HeapType,
 }
 
+impl PartialEq for Object {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
 impl Object {
     pub fn new_pair(car: Atom, cdr: Atom) -> Self {
         Self {
@@ -215,6 +259,12 @@ impl Object {
         Self {
             mark: false,
             inner: HeapType::Func(fun),
+        }
+    }
+    pub fn new_native_func(fun: fn(&[Atom]) -> Atom) -> Self {
+        Self {
+            mark: false,
+            inner: HeapType::NativeFunc(fun),
         }
     }
 
@@ -231,6 +281,7 @@ impl Object {
             HeapType::Str {} => (),
             HeapType::Vector {} => (),
             HeapType::Func(_) => (),
+            HeapType::NativeFunc(_) => (),
         }
     }
 
@@ -250,6 +301,10 @@ impl Object {
         matches!(self.inner, HeapType::Func(..))
     }
 
+    pub fn is_native_func(&self) -> bool {
+        matches!(self.inner, HeapType::NativeFunc(..))
+    }
+
     pub fn as_pair(&self) -> &Pair {
         if let HeapType::Pair(v) = &self.inner {
             v
@@ -261,6 +316,14 @@ impl Object {
     pub fn as_func(&self) -> Rc<RuntimeFn> {
         if let HeapType::Func(v) = &self.inner {
             v.clone()
+        } else {
+            panic!()
+        }
+    }
+
+    pub fn as_native_func(&self) -> fn(&[Atom]) -> Atom {
+        if let HeapType::NativeFunc(v) = &self.inner {
+            *v
         } else {
             panic!()
         }
@@ -278,8 +341,21 @@ pub enum HeapType {
     Str {},
     Vector {},
     Func(Rc<RuntimeFn>),
+    NativeFunc(fn(&[Atom]) -> Atom),
 }
 
+impl PartialEq for HeapType {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Pair(l0), Self::Pair(r0)) => l0 == r0,
+            (Self::Func(l0), Self::Func(r0)) => l0 == r0,
+            (Self::NativeFunc(l0), Self::NativeFunc(r0)) => (*l0) as usize == (*r0) as usize,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
+}
+
+#[derive(PartialEq)]
 pub struct Pair {
     pub car: Atom,
     pub cdr: Atom,
@@ -298,6 +374,7 @@ impl std::fmt::Debug for HeapType {
                 .field("const_table", &fun.const_table)
                 .field("locals", &fun.locals)
                 .finish(),
+            Self::NativeFunc(_) => f.debug_struct("NativeFunc").finish(),
         }
     }
 }
@@ -321,5 +398,5 @@ fn test() {
     println!("{:?}", a.as_obj());
     println!("{:?}", a);
 
-    panic!("{:?}", a.get_tag())
+    panic!("{:?}", std::mem::size_of::<Object>());
 }

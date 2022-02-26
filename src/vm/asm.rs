@@ -13,7 +13,6 @@ use tinyvec::ArrayVec;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Ins {
     PatchMe,
-    Native(usize),
     PushLambda(usize),
     Op(Op),
 }
@@ -22,7 +21,6 @@ impl Ins {
     pub fn size(&self) -> usize {
         match self {
             Ins::PatchMe => 0,
-            Ins::Native(_) => 8,
             Ins::PushLambda(_) => 8,
             Ins::Op(_) => 8,
         }
@@ -31,7 +29,6 @@ impl Ins {
         let mut res = ArrayVec::new();
         match self {
             Ins::PatchMe => panic!("PatchMe encountered when assembling!"),
-            Ins::Native(f) => res.extend(f.to_be_bytes()),
             Ins::PushLambda(_) => res.extend([0; 8]),
             Ins::Op(op) => match op {
                 Op::Push(constant) => {
@@ -100,11 +97,6 @@ impl Ins {
                 Op::Cons => {
                     res.push(14);
                     res.extend([0; 7])
-                }
-                Op::NativeCall(argc) => {
-                    res.push(15);
-                    res.extend([0; 3]);
-                    res.extend(argc.to_be_bytes())
                 }
             },
         }
