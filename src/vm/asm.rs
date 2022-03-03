@@ -1,8 +1,7 @@
+use super::memman::allocate_raw_and_store;
 use super::{
     atom::Atom,
-    atom::Object,
     closure::{Closure, RuntimeFn},
-    memman::alloc,
     Op,
 };
 use fnv::FnvHashMap;
@@ -115,6 +114,7 @@ pub fn assemble(closures: Vec<Closure>) -> FnvHashMap<usize, Rc<RuntimeFn>> {
             res.extend(ins.assemble());
         }
         let func = RuntimeFn {
+            arity: closure.arity,
             assembly: res.into_boxed_slice().leak(),
             locals: closure.locals,
             upvalues: closure.upvalues,
@@ -135,7 +135,9 @@ pub fn assemble(closures: Vec<Closure>) -> FnvHashMap<usize, Rc<RuntimeFn>> {
                     let mut const_id = None;
                     for i in 0..closure.const_table.len() {
                         if closure.const_table[i]
-                            == Atom::new_obj(alloc(Object::new_func(fun.clone())))
+                            == Atom::new_obj(
+                                allocate_raw_and_store(fun.clone()).expect("Allocation failure"),
+                            )
                         {
                             const_id = i.some();
                             break;
@@ -143,9 +145,9 @@ pub fn assemble(closures: Vec<Closure>) -> FnvHashMap<usize, Rc<RuntimeFn>> {
                     }
                     if const_id.is_none() {
                         const_id = closure.const_table.len().some();
-                        closure
-                            .const_table
-                            .push(Atom::new_obj(alloc(Object::new_func(fun))));
+                        closure.const_table.push(Atom::new_obj(
+                            allocate_raw_and_store(fun).expect("Allocation failure"),
+                        ));
                     }
 
                     let ins = Ins::Op(Op::Push(const_id.unwrap() as u32));
@@ -155,6 +157,7 @@ pub fn assemble(closures: Vec<Closure>) -> FnvHashMap<usize, Rc<RuntimeFn>> {
                 }
             }
             let func = RuntimeFn {
+                arity: closure.arity,
                 assembly: res.into_boxed_slice().leak(),
                 locals: closure.locals,
                 upvalues: closure.upvalues,

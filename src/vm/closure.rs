@@ -6,10 +6,42 @@ pub type ConstTable = Vec<Atom>;
 
 #[derive(PartialEq, Clone)]
 pub struct RuntimeFn {
+    pub arity: i16,
     pub assembly: &'static [u8],
     pub locals: FnvHashMap<SymId, Local>,
     pub upvalues: Vec<Upvalue>,
     pub const_table: ConstTable,
+}
+
+#[derive(Clone, Copy)]
+pub struct NativeFn {
+    arity: i16,
+    fun: fn(&[Atom]) -> Atom,
+    //name: &'static str,
+}
+
+impl NativeFn {
+    pub fn new(arity: i16, fun: fn(&[Atom]) -> Atom) -> Self {
+        Self { arity, fun }
+    }
+    pub fn call(&self, a: &[Atom]) -> Atom {
+        (self.fun)(a)
+    }
+}
+
+impl std::fmt::Debug for NativeFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeFn")
+            .field("arity", &self.arity)
+            //.field("name", &self.name)
+            .finish()
+    }
+}
+
+impl PartialEq for NativeFn {
+    fn eq(&self, other: &Self) -> bool {
+        self.arity == other.arity && (self.fun as usize) == (other.fun as usize)
+    }
 }
 
 impl std::fmt::Debug for RuntimeFn {
@@ -23,6 +55,7 @@ impl std::fmt::Debug for RuntimeFn {
 }
 #[derive(PartialEq, Debug, Clone)]
 pub struct Closure {
+    pub arity: i16,
     pub assembly: Vec<Ins>,
     pub id: usize,
     pub parent: Option<usize>,

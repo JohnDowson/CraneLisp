@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
-use crate::vm::{
-    atom::{Object, Tag},
-    memman::alloc,
+use self::{
+    atom::{Atom, Downcast, LispType, Pair},
+    closure::{NativeFn, RuntimeFn},
+    memman::{allocate_raw_and_store, sweep},
 };
-
-use self::{atom::Atom, closure::RuntimeFn, memman::sweep};
+use crate::vm::atom::Tag;
 use smol_str::SmolStr;
 use somok::Somok;
 use tinyvec::ArrayVec;
@@ -32,6 +32,7 @@ pub enum Error {
     UndefinedLocal,
     InvalidValueTag,
     PlaceInvalid,
+    AllocationFailure,
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +76,7 @@ impl Vm {
         #[cfg(debug_assertions)]
         {
             let ip = self.ip;
-            println!("stack: {:?}", &self.stack);
+            println!("stack: {:?}", &self.stack[..self.sp as usize]);
             println!("{:?}:\t {:?}", ip, &op);
         }
         match op {
@@ -115,9 +116,11 @@ impl Vm {
             Op::Return => {
                 let frame = self.call_stack.pop().unwrap();
                 self.code = frame.fp.assembly;
+                let ret = self.pop()?;
                 self.ip = frame.ip;
-                self.sp = frame.sp + 1;
+                self.sp = frame.sp;
                 self.bp = frame.bp;
+                self.push(ret);
             }
             Op::Halt => return true.okay(),
             Op::Add => {
@@ -168,9 +171,9 @@ impl Vm {
                 let atom = self.pop()?;
 
                 if let Tag::Obj = atom.get_tag() {
-                    let obj = unsafe { &*atom.as_obj() };
-                    if obj.is_pair() {
-                        self.push(obj.as_pair().car)
+                    let obj = atom.as_obj();
+                    if obj.is::<Pair>() {
+                        self.push(obj.downcast::<Pair>().car);
                     } else {
                         return Error::TypeMismatch(format!("Expected Pair, found {:?}", atom))
                             .error();
@@ -183,9 +186,9 @@ impl Vm {
                 let atom = self.pop()?;
 
                 if let Tag::Obj = atom.get_tag() {
-                    let obj = unsafe { &*atom.as_obj() };
-                    if obj.is_pair() {
-                        self.push(obj.as_pair().cdr)
+                    let obj = atom.as_obj();
+                    if obj.is::<Pair>() {
+                        self.push(obj.downcast::<Pair>().cdr)
                     } else {
                         return Error::TypeMismatch(format!("Expected Pair, found {:?}", atom))
                             .error();
@@ -197,18 +200,21 @@ impl Vm {
             Op::Cons => {
                 let car = self.pop()?;
                 let cdr = self.pop()?;
-                let pair = self.alloc(Object::new_pair(car, cdr));
+                let pair = self
+                    .alloc(Pair::new(car, cdr))
+                    .ok_or(Error::AllocationFailure)?;
                 self.push(pair);
             }
         }
         false.okay()
     }
 
-    fn alloc(&mut self, obj: Object) -> Atom {
-        let atom = Atom::new_obj(alloc(obj));
+    fn alloc<T: LispType + 'static>(&mut self, obj: T) -> Option<Atom> {
+        let ptr = allocate_raw_and_store(obj)?;
+        let atom = Atom::new_obj(ptr);
         self.mark();
         sweep();
-        atom
+        atom.some()
     }
 
     fn mark(&mut self) {
@@ -220,9 +226,9 @@ impl Vm {
     fn call(&mut self, argc: u32) -> Result<()> {
         let atom = self.pop().unwrap();
         if let Tag::Obj = atom.get_tag() {
-            let obj = unsafe { &*atom.as_obj() };
-            if obj.is_func() {
-                let func = obj.as_func();
+            let obj = atom.as_obj();
+            if obj.is::<Rc<RuntimeFn>>() {
+                let func = obj.downcast::<Rc<RuntimeFn>>();
                 self.sp -= argc as isize;
                 let frame = Frame {
                     fp: self.cf.clone(),
@@ -236,13 +242,13 @@ impl Vm {
                 self.cf = func;
                 self.call_stack.push(frame);
                 self.ip = 0;
-            } else if obj.is_native_func() {
+            } else if obj.is::<NativeFn>() {
                 let mut args: ArrayVec<[Atom; 256]> = ArrayVec::new();
-                let func = obj.as_native_func();
+                let func = obj.downcast::<NativeFn>();
                 for _ in 0..argc {
                     args.push(self.pop()?);
                 }
-                self.push(func(&args));
+                self.push(func.call(&args));
             }
         } else {
             return Error::TypeMismatch(format!("Expected Func, found {:?}", atom)).error();

@@ -75,7 +75,6 @@ pub fn repl(time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
         while !halt {
             halt = vm.execute().unwrap();
         }
-        println!("{:?}", vm.stack);
 
         let t3 = Instant::now();
         if time {

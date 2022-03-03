@@ -1,6 +1,11 @@
-use std::rc::Rc;
-
-use super::closure::RuntimeFn;
+use super::{
+    closure::{NativeFn, RuntimeFn},
+    memman::{allocate, mark},
+};
+use cl_alloc::ObjectHeader;
+use enumn::N;
+use somok::{Leaksome, Somok};
+use std::{fmt::Debug, ptr::NonNull, rc::Rc};
 
 #[repr(u8)]
 #[derive(Debug)]
@@ -43,7 +48,7 @@ impl PartialEq for Atom {
             (Tag::Uint, Tag::Uint) => self.as_uint().eq(&other.as_uint()),
             (Tag::Uint, _) => false,
             (_, Tag::Uint) => false,
-            (Tag::Obj, Tag::Obj) => unsafe { (&*self.as_obj()).eq(&*other.as_obj()) },
+            (Tag::Obj, Tag::Obj) => todo!(), //unsafe { (&*self.as_obj()).eq(&*other.as_obj()) },
             (Tag::Obj, _) => false,
             (_, Tag::Obj) => false,
             (Tag::Sym, _) => false,
@@ -82,7 +87,7 @@ impl PartialOrd for Atom {
     }
 }
 
-impl std::fmt::Debug for Atom {
+impl Debug for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.get_tag() {
             Tag::NaN => write!(f, "NaN"),
@@ -90,7 +95,18 @@ impl std::fmt::Debug for Atom {
             Tag::Int => write!(f, "i{:?}", self.as_int()),
             Tag::Undefined => write!(f, "Undefined"),
             Tag::Uint => write!(f, "u{:?}", self.as_uint()),
-            Tag::Obj => write!(f, "{:?}", unsafe { &*self.as_obj() }),
+            Tag::Obj => {
+                let ptr = self.as_obj();
+                let dbg = match ptr.type_id() {
+                    Type::Atom => ptr.debug::<Atom>(),
+                    Type::Pair => ptr.debug::<Pair>(),
+                    Type::Str => todo!(),
+                    Type::Vector => todo!(),
+                    Type::Func => ptr.debug::<Rc<RuntimeFn>>(),
+                    Type::NativeFunc => ptr.debug::<NativeFn>(),
+                };
+                write!(f, "{:?}", dbg)
+            }
             Tag::Sym => write!(f, "Symbol {:?}", self.as_sym()),
             Tag::Ptr => write!(f, "Ptr {:?}", self.as_ptr()),
             Tag::Float => write!(f, "f{:?}", self.as_float()),
@@ -134,18 +150,13 @@ impl Atom {
         Self(val)
     }
 
-    pub fn new_obj(i: *mut Object) -> Self {
-        let val = i as u64 | (Self::MASK_EXPONENT | Self::MASK_TYPE_OBJ);
+    pub fn new_obj(i: NonNull<ObjectHeader>) -> Self {
+        let val = i.as_ptr() as u64 | (Self::MASK_EXPONENT | Self::MASK_TYPE_OBJ);
         Self(val)
     }
 
     pub fn new_sym(i: usize) -> Self {
         let val = i as u64 | (Self::MASK_EXPONENT | Self::MASK_TYPE_SYM);
-        Self(val)
-    }
-
-    pub fn new_ptr(i: *mut Atom) -> Self {
-        let val = i as u64 | (Self::MASK_EXPONENT | Self::MASK_TYPE_PTR);
         Self(val)
     }
 
@@ -198,7 +209,7 @@ impl Atom {
         }
     }
 
-    pub fn as_obj(&self) -> *mut Object {
+    pub fn as_obj(&self) -> *mut ObjectHeader {
         match self.get_tag() {
             Tag::Obj => (self.0 as u64 & Self::MASK_PTR_PAYLOAD) as _,
             tag => panic!("Can't cast {:?} as Obj", tag),
@@ -212,7 +223,7 @@ impl Atom {
         }
     }
 
-    pub fn as_ptr(&self) -> *mut Atom {
+    pub fn as_ptr(&self) -> *mut u8 {
         match self.get_tag() {
             Tag::Ptr => (self.0 as u64 & Self::MASK_PTR_PAYLOAD) as _,
             tag => panic!("Can't cast {:?} as Sym", tag),
@@ -220,15 +231,27 @@ impl Atom {
     }
 
     pub fn mark(&mut self) {
-        match self.get_tag() {
-            Tag::Obj => unsafe {
-                (&mut *self.as_obj()).mark();
-            },
-
-            Tag::Ptr => unsafe {
-                (&mut *self.as_ptr()).mark();
-            },
-            _ => (),
+        if let Tag::Obj = self.get_tag() {
+            if mark(self.as_ptr()) {
+                return;
+            }
+            unsafe {
+                match Type::n((&*self.as_obj()).ty()) {
+                    Some(ty) => match ty {
+                        Type::Atom => (),
+                        Type::Pair => {
+                            let pair = &mut *self.as_ptr().cast::<Pair>();
+                            pair.car.mark();
+                            pair.cdr.mark();
+                        }
+                        Type::Str => todo!(),
+                        Type::Vector => todo!(),
+                        Type::Func => todo!(),
+                        Type::NativeFunc => todo!(),
+                    },
+                    None => panic!("Invalid object type tag"),
+                }
+            }
         }
     }
 
@@ -237,160 +260,156 @@ impl Atom {
     }
 }
 
-pub struct Object {
-    pub mark: bool,
-    inner: HeapType,
-}
-
-impl PartialEq for Object {
-    fn eq(&self, other: &Self) -> bool {
-        self.inner == other.inner
-    }
-}
-
-impl Object {
-    pub fn new_pair(car: Atom, cdr: Atom) -> Self {
-        Self {
-            mark: false,
-            inner: HeapType::Pair(Pair { car, cdr }),
-        }
-    }
-    pub fn new_func(fun: Rc<RuntimeFn>) -> Self {
-        Self {
-            mark: false,
-            inner: HeapType::Func(fun),
-        }
-    }
-    pub fn new_native_func(fun: fn(&[Atom]) -> Atom) -> Self {
-        Self {
-            mark: false,
-            inner: HeapType::NativeFunc(fun),
-        }
-    }
-
-    pub fn mark(&mut self) {
-        if self.mark {
-            return;
-        }
-        self.mark = true;
-        match &mut self.inner {
-            HeapType::Pair(Pair { car, cdr }) => {
-                car.mark();
-                cdr.mark()
-            }
-            HeapType::Str {} => (),
-            HeapType::Vector {} => (),
-            HeapType::Func(_) => (),
-            HeapType::NativeFunc(_) => (),
-        }
-    }
-
-    pub fn is_pair(&self) -> bool {
-        matches!(self.inner, HeapType::Pair { .. })
-    }
-
-    pub fn is_str(&self) -> bool {
-        matches!(self.inner, HeapType::Str { .. })
-    }
-
-    pub fn is_vector(&self) -> bool {
-        matches!(self.inner, HeapType::Vector { .. })
-    }
-
-    pub fn is_func(&self) -> bool {
-        matches!(self.inner, HeapType::Func(..))
-    }
-
-    pub fn is_native_func(&self) -> bool {
-        matches!(self.inner, HeapType::NativeFunc(..))
-    }
-
-    pub fn as_pair(&self) -> &Pair {
-        if let HeapType::Pair(v) = &self.inner {
-            v
-        } else {
-            panic!()
-        }
-    }
-
-    pub fn as_func(&self) -> Rc<RuntimeFn> {
-        if let HeapType::Func(v) = &self.inner {
-            v.clone()
-        } else {
-            panic!()
-        }
-    }
-
-    pub fn as_native_func(&self) -> fn(&[Atom]) -> Atom {
-        if let HeapType::NativeFunc(v) = &self.inner {
-            *v
-        } else {
-            panic!()
-        }
-    }
-}
-
-impl std::fmt::Debug for Object {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Object({:?}): {:?}", self.mark, self.inner)
-    }
-}
-
-pub enum HeapType {
-    Pair(Pair),
-    Str {},
-    Vector {},
-    Func(Rc<RuntimeFn>),
-    NativeFunc(fn(&[Atom]) -> Atom),
-}
-
-impl PartialEq for HeapType {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Pair(l0), Self::Pair(r0)) => l0 == r0,
-            (Self::Func(l0), Self::Func(r0)) => l0 == r0,
-            (Self::NativeFunc(l0), Self::NativeFunc(r0)) => (*l0) as usize == (*r0) as usize,
-            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
-        }
-    }
-}
-
-#[derive(PartialEq)]
 pub struct Pair {
     pub car: Atom,
     pub cdr: Atom,
 }
 
-const _ASSERT_HT_SIZE: [(); 24] = [(); std::mem::size_of::<HeapType>()];
-
-impl std::fmt::Debug for HeapType {
+impl Debug for Pair {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "( {:?} . {:?} )", &self.car, &self.cdr)
+    }
+}
+
+impl Pair {
+    pub fn new(car: Atom, cdr: Atom) -> Self {
+        Self { car, cdr }
+    }
+}
+
+pub trait LispType {
+    fn type_tag() -> Type;
+}
+impl LispType for Atom {
+    fn type_tag() -> Type {
+        Type::Atom
+    }
+}
+impl LispType for Pair {
+    fn type_tag() -> Type {
+        Type::Pair
+    }
+}
+impl LispType for Rc<RuntimeFn> {
+    fn type_tag() -> Type {
+        Type::Func
+    }
+}
+impl LispType for NativeFn {
+    fn type_tag() -> Type {
+        Type::NativeFunc
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, N)]
+#[repr(usize)]
+pub enum Type {
+    Atom,
+    Pair,
+    Str,
+    Vector,
+    Func,
+    NativeFunc,
+}
+impl Type {
+    pub fn size(&self) -> usize {
         match self {
-            Self::Pair(Pair { car, cdr }) => write!(f, "({:?} . {:?})", car, cdr),
-            Self::Str {} => f.debug_struct("Str").finish(),
-            Self::Vector {} => f.debug_struct("Vector").finish(),
-            Self::Func(fun) => f
-                .debug_struct("Func")
-                .field("const_table", &fun.const_table)
-                .field("locals", &fun.locals)
-                .finish(),
-            Self::NativeFunc(_) => f.debug_struct("NativeFunc").finish(),
+            Type::Atom => 8,
+            Type::Pair => 16,
+            Type::Str => 24,
+            Type::Vector => 24,
+            Type::Func => std::mem::size_of::<Rc<RuntimeFn>>(),
+            Type::NativeFunc => std::mem::size_of::<NativeFn>(),
         }
     }
 }
 
+#[repr(transparent)]
+pub struct Object<T>(*mut T);
+impl<T: LispType + 'static> Object<T> {
+    pub fn from_ptr(p: *mut T) -> Self {
+        Self(p)
+    }
+    pub fn new(v: T) -> Self {
+        allocate(v).expect("Memory allocation failure")
+    }
+    pub fn new_static(v: T) -> Self {
+        Self(v.boxed().leak())
+    }
+
+    pub fn type_tag(&self) -> Type {
+        T::type_tag()
+    }
+    pub fn inner(self) -> T
+    where
+        T: Copy,
+    {
+        unsafe { *self.0 }
+    }
+}
+
+pub trait Downcast {
+    fn downcast<T: LispType>(&self) -> T;
+    fn type_id(&self) -> Type;
+    fn is<T: LispType>(&self) -> bool {
+        self.type_id() == T::type_tag()
+    }
+    fn as_object<T: LispType + 'static>(&self) -> Object<T>;
+    fn debug<T: LispType + Debug + 'static>(&self) -> &dyn Debug;
+}
+
+impl Downcast for *mut ObjectHeader {
+    fn downcast<T: LispType>(&self) -> T {
+        let ty = self.type_id();
+        if ty == T::type_tag() {
+            unsafe { self.add(1).cast::<T>().read() }
+        } else {
+            panic!(
+                "Invalid downcast, can't cast `{:?}` to `{:?}`",
+                ty,
+                T::type_tag()
+            )
+        }
+    }
+
+    fn type_id(&self) -> Type {
+        Type::n(unsafe { &**self }.ty()).expect("Invalid type")
+    }
+
+    fn as_object<T: LispType + 'static>(&self) -> Object<T> {
+        let ty = self.type_id();
+        if ty == T::type_tag() {
+            unsafe { Object::from_ptr(self.add(1).cast::<T>()) }
+        } else {
+            panic!(
+                "Invalid downcast, can't cast `{:?}` to `{:?}`",
+                ty,
+                T::type_tag()
+            )
+        }
+    }
+
+    fn debug<T: LispType + Debug + 'static>(&self) -> &dyn Debug {
+        let ty = self.type_id();
+        if ty == T::type_tag() {
+            unsafe { &*self.add(1).cast::<T>() }
+        } else {
+            panic!(
+                "Invalid downcast, can't cast `{:?}` to `{:?}`",
+                ty,
+                T::type_tag()
+            )
+        }
+    }
+}
+
+#[used]
+static ASSERT_HT_SIZE: [(); 8] = [(); std::mem::size_of::<Type>()];
+
 #[test]
 fn test() {
-    use somok::Leaksome;
-
-    let p = Box::new(Object {
-        mark: true,
-        inner: HeapType::Pair(Pair {
-            car: Atom::new_uint(69),
-            cdr: Atom::new_int(420),
-        }),
-    })
-    .leak() as *mut _;
+    use crate::vm::memman::allocate_raw;
+    let p = allocate_raw(Type::Pair).unwrap();
 
     println!("{:?}", p);
     let a = Atom::new_obj(p);
@@ -398,5 +417,5 @@ fn test() {
     println!("{:?}", a.as_obj());
     println!("{:?}", a);
 
-    panic!("{:?}", std::mem::size_of::<Object>());
+    panic!("{:?}", std::mem::size_of::<Type>());
 }

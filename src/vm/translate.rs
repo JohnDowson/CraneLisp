@@ -1,14 +1,16 @@
 use std::fmt::Debug;
 
 use super::asm::Ins;
-use super::atom::{Atom, Object};
+use super::atom::Atom;
 use super::closure::{Closure, Local, ReturnToPatch};
 use super::Op;
 use crate::parser::expr::Expr;
+use crate::vm::closure::NativeFn;
+use crate::vm::memman::allocate_raw_and_store;
 use crate::Span;
 use crate::SymId;
 use smol_str::SmolStr;
-use somok::{Leaksome, Somok};
+use somok::Somok;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -52,6 +54,7 @@ impl Translator {
             active_closure: 0,
             next_func_id: 1,
             closures: vec![Closure {
+                arity: 0,
                 assembly: Default::default(),
                 id: 0,
                 parent: Default::default(),
@@ -150,11 +153,14 @@ impl Translator {
                                 self.translate(arg)?;
                             }
                             fn eq(atoms: &[Atom]) -> Atom {
-                                if atoms.windows(2).all(|a| {
-                                    if let [a, b] = a {
+                                if atoms.chunks(2).fold(true, |acc, ats| {
+                                    if !acc {
+                                        return acc;
+                                    };
+                                    if let [b, a] = ats {
                                         a == b
                                     } else {
-                                        unreachable!()
+                                        true
                                     }
                                 }) {
                                     Atom::new_uint(1)
@@ -163,7 +169,8 @@ impl Translator {
                                 }
                             }
                             self.push_const(Atom::new_obj(
-                                Object::new_native_func(eq).boxed().leak(),
+                                allocate_raw_and_store(NativeFn::new(-1, eq))
+                                    .expect("Allocation failure"),
                             ));
                             self.ins(Op::Call(argc))
                         }
@@ -173,11 +180,14 @@ impl Translator {
                                 self.translate(arg)?;
                             }
                             fn lt(atoms: &[Atom]) -> Atom {
-                                if atoms.windows(2).all(|a| {
-                                    if let [a, b] = a {
+                                if atoms.chunks(2).fold(true, |acc, ats| {
+                                    if !acc {
+                                        return acc;
+                                    };
+                                    if let [b, a] = ats {
                                         a < b
                                     } else {
-                                        unreachable!()
+                                        true
                                     }
                                 }) {
                                     Atom::new_uint(1)
@@ -186,7 +196,8 @@ impl Translator {
                                 }
                             }
                             self.push_const(Atom::new_obj(
-                                Object::new_native_func(lt).boxed().leak(),
+                                allocate_raw_and_store(NativeFn::new(-1, lt))
+                                    .expect("Allocation failure"),
                             ));
                             self.ins(Op::Call(argc))
                         }
@@ -285,8 +296,8 @@ impl Translator {
 
     fn translate_lambda(&mut self, args: &Expr, body: &Expr) -> Result<()> {
         self.new_closure();
-
         if let Expr::List(args, _) = args {
+            self.closure_mut().arity = args.len() as _;
             let mut rest = false;
             let mut i = 0;
             loop {
@@ -446,6 +457,7 @@ impl Translator {
         let id = self.next_func_id();
         self.closure_mut().children.push(id);
         self.closures.push(Closure {
+            arity: 0,
             id,
             assembly: Default::default(),
             parent: Some(self.active_closure),
