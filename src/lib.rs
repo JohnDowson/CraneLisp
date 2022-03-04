@@ -3,6 +3,16 @@
 #![feature(box_syntax)]
 #![feature(assert_matches)]
 
+// macro_rules! tif {
+//     ($cond:expr => $true:expr ; $false:expr) => {
+//         if $cond {
+//             $true
+//         } else {
+//             $false
+//         }
+//     };
+// }
+
 macro_rules! syntax {
     ($kind:tt, $($spans:expr),+) => {
         {

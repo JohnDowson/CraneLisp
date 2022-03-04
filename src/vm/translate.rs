@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use super::asm::Ins;
 use super::atom::Atom;
-use super::closure::{Closure, Local, ReturnToPatch};
+use super::closure::{Func, Local, ReturnToPatch, Upvalue};
 use super::Op;
 use crate::parser::expr::Expr;
 use crate::vm::closure::NativeFn;
@@ -44,7 +44,7 @@ fn error<T>(kind: ErrorKind, span: Span) -> Result<T> {
 pub struct Translator {
     active_closure: usize,
     next_func_id: usize,
-    closures: Vec<Closure>,
+    closures: Vec<Func>,
     symbol_table: Vec<SmolStr>,
 }
 
@@ -53,7 +53,7 @@ impl Translator {
         Self {
             active_closure: 0,
             next_func_id: 1,
-            closures: vec![Closure {
+            closures: vec![Func {
                 arity: 0,
                 assembly: Default::default(),
                 id: 0,
@@ -65,12 +65,13 @@ impl Translator {
                 locals: Default::default(),
                 upvalues: Default::default(),
                 loops: Default::default(),
+                closure: false,
             }],
             symbol_table: Default::default(),
         }
     }
 
-    pub fn emit(self) -> (Vec<Closure>, Vec<SmolStr>) {
+    pub fn emit(self) -> (Vec<Func>, Vec<SmolStr>) {
         (self.closures, self.symbol_table)
     }
 
@@ -90,12 +91,10 @@ impl Translator {
                 "nil" => self.push_const(Atom::null()),
                 sym => {
                     let sym = self.intern(sym);
-                    let local = self.get_local(&sym);
-                    let outer = self.get_upvalue(&sym);
-                    if let Some(local) = local {
+                    if let Some(local) = self.get_local(&sym) {
                         self.ins(Op::LGet(local as u32));
-                    } else if let Some(_outer) = outer {
-                        todo!()
+                    } else if let Some(upval) = self.get_upvalue(&sym, self.active_closure) {
+                        self.ins(Op::UpvalGet(upval as u32))
                     } else {
                         return error(UndefinedVariable, *span);
                     }
@@ -116,13 +115,16 @@ impl Translator {
                         "set" => {
                             if let Expr::Symbol(sym, _span) = rest[0] {
                                 let sym = self.intern(sym);
-                                let local = self.get_local(&sym);
-                                let outer = self.get_upvalue(&sym);
-                                if let Some(local) = local {
+                                if let Some(local) = self.get_local(&sym) {
                                     self.translate(&rest[1])?;
-                                    self.ins(Op::LSet(local as u32))
-                                } else if let Some(_outer) = outer {
-                                    todo!()
+                                    self.ins(Op::LSet(local as u32));
+                                    self.translate(&rest[1])?;
+                                } else if let Some(id) = self.get_upvalue(&sym, self.active_closure)
+                                {
+                                    self.func_mut().closure = true;
+                                    self.translate(&rest[1])?;
+                                    self.ins(Op::UpvalSet(id as u32));
+                                    self.translate(&rest[1])?;
                                 } else {
                                     self.new_local(sym);
                                     self.translate(&rest[1])?;
@@ -169,7 +171,7 @@ impl Translator {
                                 }
                             }
                             self.push_const(Atom::new_obj(
-                                allocate_raw_and_store(NativeFn::new(-1, eq))
+                                allocate_raw_and_store(NativeFn::new(-1, eq, "eq"))
                                     .expect("Allocation failure"),
                             ));
                             self.ins(Op::Call(argc))
@@ -196,7 +198,7 @@ impl Translator {
                                 }
                             }
                             self.push_const(Atom::new_obj(
-                                allocate_raw_and_store(NativeFn::new(-1, lt))
+                                allocate_raw_and_store(NativeFn::new(-1, lt, "lt"))
                                     .expect("Allocation failure"),
                             ));
                             self.ins(Op::Call(argc))
@@ -215,7 +217,7 @@ impl Translator {
                                     ins_loc,
                                 } in patches
                                 {
-                                    self.closure_mut().assembly[ins_loc as usize] =
+                                    self.func_mut().assembly[ins_loc as usize] =
                                         Ins::Op(Op::Jump(((end - return_loc) + 8) as i32));
                                 }
                             } else {
@@ -249,11 +251,11 @@ impl Translator {
                                 let truth_end = self.current_byte_offset();
 
                                 let lie_start = self.current_byte_offset();
-                                self.closure_mut().assembly[patch_fjump as usize] =
+                                self.func_mut().assembly[patch_fjump as usize] =
                                     Ins::Op(Op::FJump((lie_start - start) as i32));
                                 self.translate(lie)?;
                                 let end = self.current_byte_offset();
-                                self.closure_mut().assembly[patch_ejump as usize] =
+                                self.func_mut().assembly[patch_ejump as usize] =
                                     Ins::Op(Op::Jump((end - truth_end) as i32));
                             } else {
                                 return error(InvalidIf, *span);
@@ -295,9 +297,9 @@ impl Translator {
     }
 
     fn translate_lambda(&mut self, args: &Expr, body: &Expr) -> Result<()> {
-        self.new_closure();
+        self.new_func();
         if let Expr::List(args, _) = args {
-            self.closure_mut().arity = args.len() as _;
+            self.func_mut().arity = args.len() as _;
             let mut rest = false;
             let mut i = 0;
             loop {
@@ -313,14 +315,14 @@ impl Translator {
                         continue;
                     } else {
                         self.new_local(id);
-                        self.closure_mut().sp += 1;
+                        self.func_mut().sp += 1;
                     }
                     if rest {
                         if i != args.len() - 1 {
                             return error(RestMustBeLast, arg.span());
                         }
                         self.new_local(id);
-                        self.closure_mut().sp += 1;
+                        self.func_mut().sp += 1;
                         break;
                     }
                 } else {
@@ -342,24 +344,28 @@ impl Translator {
 
         self.ins(Op::Return);
 
-        let fid = self.closure().id;
-        self.pop_closure();
+        let fid = self.func().id;
+        let closure = self.func().closure;
+        self.pop_func();
         self.push_lambda(fid);
+        if closure {
+            self.ins(Op::CloseOver)
+        }
 
         ().okay()
     }
 
     fn push_const(&mut self, constant: Atom) {
-        let closure = self.closure_mut();
-        closure.sp += 1;
-        for i in 0..closure.const_table.len() {
-            if closure.const_table[i] == constant {
+        let func = self.func_mut();
+        func.sp += 1;
+        for i in 0..func.const_table.len() {
+            if func.const_table[i] == constant {
                 self.ins(Op::Push(i as u32));
                 return;
             }
         }
-        let id = closure.const_table.len();
-        closure.const_table.push(constant);
+        let id = func.const_table.len();
+        func.const_table.push(constant);
         self.ins(Op::Push(id as u32));
     }
 
@@ -375,45 +381,61 @@ impl Translator {
     }
 
     fn current_byte_offset(&self) -> isize {
-        self.closure().assembly.iter().fold(0, |acc, _| acc + 8)
+        self.func().assembly.iter().fold(0, |acc, _| acc + 8)
     }
 
     fn current_offset(&self) -> isize {
-        self.closure().assembly.iter().fold(0, |acc, _| acc + 1)
+        self.func().assembly.iter().fold(0, |acc, _| acc + 1)
     }
 
     fn get_local(&self, sym: &SymId) -> Option<usize> {
-        if let Some(var) = self.closure().locals.get(sym) {
+        if let Some(var) = self.func().locals.get(sym) {
             return var.id.some();
         }
         None
     }
 
     fn new_local(&mut self, sym: SymId) -> usize {
-        let slot = self.closure().sp;
-        self.closure_mut().locals.insert(sym, Local::new(slot));
+        let slot = self.new_bp();
+        self.func_mut().locals.insert(sym, Local::new(slot));
         slot
     }
 
-    fn get_upvalue(&self, sym: &SymId) -> Option<usize> {
-        let mut parent = self.closure().parent;
-        while let Some(p) = parent {
-            let closure = &self.closures[p];
-            if let Some(var) = closure.locals.get(sym) {
-                return var.id.some();
+    fn get_upvalue(&mut self, sym: &SymId, func: usize) -> Option<usize> {
+        let p = self.closures[func].parent;
+        if let Some(p) = p {
+            let parent = &mut self.closures[p];
+            let local = if let Some(local) = parent.locals.get_mut(sym) {
+                local.captured = true;
+                local.id.some()
+            } else {
+                None
+            };
+            if let Some(local) = local {
+                let funct = &mut self.closures[func];
+                let idx = funct.upvalues.len();
+                funct.upvalues.push(Upvalue {
+                    id: local,
+                    local: true,
+                });
+                return idx.some();
+            } else if let Some(upval) = self.get_upvalue(sym, p) {
+                let funct = &mut self.closures[func];
+                let idx = funct.upvalues.len();
+                funct.upvalues.push(Upvalue {
+                    id: upval,
+                    local: false,
+                });
+
+                self.closures[p].closure = true;
+                return idx.some();
             }
-            parent = closure.parent
         }
         None
     }
 
-    fn _new_upvalue(&mut self, _index: usize, _is_local: bool) -> usize {
-        for (_sym, _uv) in self.closure().upvalues.iter().enumerate() {}
-        0
-    }
-
     fn new_bp(&self) -> usize {
-        let closure = self.closure();
+        let closure = self.func();
         let mut bp = closure.sp;
         let mut parent = closure.parent;
         while let Some(p) = parent {
@@ -425,15 +447,15 @@ impl Translator {
     }
 
     fn push_loop(&mut self) {
-        self.closure_mut().loops.push(Vec::new());
+        self.func_mut().loops.push(Vec::new());
     }
 
     fn pop_loop(&mut self) -> Vec<ReturnToPatch> {
-        self.closure_mut().loops.pop().unwrap()
+        self.func_mut().loops.pop().unwrap()
     }
 
     fn push_return_patch(&mut self, return_loc: isize, ins_loc: isize) {
-        self.closure_mut()
+        self.func_mut()
             .loops
             .last_mut()
             .unwrap()
@@ -441,22 +463,22 @@ impl Translator {
     }
 
     fn in_loop(&self) -> bool {
-        !self.closure().loops.is_empty()
+        !self.func().loops.is_empty()
     }
 
-    fn pop_closure(&mut self) {
-        self.active_closure = if let Some(p) = self.closure().parent {
+    fn pop_func(&mut self) {
+        self.active_closure = if let Some(p) = self.func().parent {
             p
         } else {
             0
         }
     }
 
-    fn new_closure(&mut self) {
+    fn new_func(&mut self) {
         let bp = self.new_bp();
         let id = self.next_func_id();
-        self.closure_mut().children.push(id);
-        self.closures.push(Closure {
+        self.func_mut().children.push(id);
+        self.closures.push(Func {
             arity: 0,
             id,
             assembly: Default::default(),
@@ -468,39 +490,40 @@ impl Translator {
             locals: Default::default(),
             upvalues: Default::default(),
             loops: Default::default(),
+            closure: false,
         });
         self.active_closure = self.closures.len() - 1;
     }
 
-    fn closure(&self) -> &Closure {
+    fn func(&self) -> &Func {
         &self.closures[self.active_closure]
     }
 
-    fn closure_mut(&mut self) -> &mut Closure {
+    fn func_mut(&mut self) -> &mut Func {
         &mut self.closures[self.active_closure]
     }
 
     fn ins(&mut self, ins: Op) {
         match ins {
-            Op::Push(_) => self.closure_mut().sp += 1,
-            Op::Pop => self.closure_mut().sp -= 1,
-            Op::LSet(_) => self.closure_mut().sp -= 1,
-            Op::LGet(_) => self.closure_mut().sp += 1,
-            Op::Add => self.closure_mut().sp -= 1,
-            Op::Sub => self.closure_mut().sp -= 1,
-            Op::Call(argc) => self.closure_mut().sp -= argc as usize,
+            Op::Push(_) => self.func_mut().sp += 1,
+            Op::Pop => self.func_mut().sp -= 1,
+            Op::LSet(_) => self.func_mut().sp -= 1,
+            Op::LGet(_) => self.func_mut().sp += 1,
+            Op::Add => self.func_mut().sp -= 1,
+            Op::Sub => self.func_mut().sp -= 1,
+            Op::Call(argc) => self.func_mut().sp -= argc as usize,
             _ => (),
         }
-        self.closure_mut().assembly.push(Ins::Op(ins))
+        self.func_mut().assembly.push(Ins::Op(ins))
     }
 
     fn patchme(&mut self) {
-        self.closure_mut().assembly.push(Ins::PatchMe)
+        self.func_mut().assembly.push(Ins::PatchMe)
     }
 
     fn push_lambda(&mut self, label: usize) {
-        self.closure_mut().sp += 1;
-        self.closure_mut().assembly.push(Ins::PushLambda(label))
+        self.func_mut().sp += 1;
+        self.func_mut().assembly.push(Ins::PushLambda(label))
     }
 
     fn next_func_id(&mut self) -> usize {

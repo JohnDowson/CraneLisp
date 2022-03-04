@@ -1,12 +1,11 @@
 use super::memman::allocate_raw_and_store;
 use super::{
     atom::Atom,
-    closure::{Closure, RuntimeFn},
+    closure::{Func, RuntimeFn},
     Op,
 };
 use fnv::FnvHashMap;
 use somok::{Leaksome, Somok};
-use std::rc::Rc;
 use tinyvec::ArrayVec;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -97,13 +96,27 @@ impl Ins {
                     res.push(14);
                     res.extend([0; 7])
                 }
+                Op::UpvalGet(slot) => {
+                    res.push(15);
+                    res.extend([0; 3]);
+                    res.extend(slot.to_be_bytes())
+                }
+                Op::UpvalSet(slot) => {
+                    res.push(16);
+                    res.extend([0; 3]);
+                    res.extend(slot.to_be_bytes())
+                }
+                Op::CloseOver => {
+                    res.push(17);
+                    res.extend([0; 7])
+                }
             },
         }
         res
     }
 }
 
-pub fn assemble(closures: Vec<Closure>) -> FnvHashMap<usize, Rc<RuntimeFn>> {
+pub fn assemble(closures: Vec<Func>) -> FnvHashMap<usize, &'static RuntimeFn> {
     let (childless, has_children): (Vec<_>, _) =
         closures.into_iter().partition(|c| c.children.is_empty());
     let mut assembled = FnvHashMap::default();
@@ -117,10 +130,10 @@ pub fn assemble(closures: Vec<Closure>) -> FnvHashMap<usize, Rc<RuntimeFn>> {
             arity: closure.arity,
             assembly: res.into_boxed_slice().leak(),
             locals: closure.locals,
-            upvalues: closure.upvalues,
             const_table: closure.const_table,
+            upvalues: closure.upvalues,
         };
-        assembled.insert(closure.id, Rc::new(func));
+        assembled.insert(closure.id, &*func.boxed().leak());
     }
 
     let (mut all_children_assembled, mut not_all_children_assembled): (Vec<_>, _) = has_children
@@ -131,12 +144,12 @@ pub fn assemble(closures: Vec<Closure>) -> FnvHashMap<usize, Rc<RuntimeFn>> {
             let mut res = Vec::new();
             for ins in closure.assembly {
                 if let Ins::PushLambda(id) = ins {
-                    let fun = assembled.get(&id).cloned().unwrap();
+                    let fun = &**assembled.get(&id).unwrap();
                     let mut const_id = None;
                     for i in 0..closure.const_table.len() {
                         if closure.const_table[i]
                             == Atom::new_obj(
-                                allocate_raw_and_store(fun.clone()).expect("Allocation failure"),
+                                allocate_raw_and_store(fun).expect("Allocation failure"),
                             )
                         {
                             const_id = i.some();
@@ -160,10 +173,10 @@ pub fn assemble(closures: Vec<Closure>) -> FnvHashMap<usize, Rc<RuntimeFn>> {
                 arity: closure.arity,
                 assembly: res.into_boxed_slice().leak(),
                 locals: closure.locals,
-                upvalues: closure.upvalues,
                 const_table: closure.const_table,
+                upvalues: closure.upvalues,
             };
-            assembled.insert(closure.id, Rc::new(func));
+            assembled.insert(closure.id, func.boxed().leak());
         }
         (all_children_assembled, not_all_children_assembled) = not_all_children_assembled
             .into_iter()

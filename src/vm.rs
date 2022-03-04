@@ -1,13 +1,13 @@
-use std::rc::Rc;
+use std::{cell::RefCell, ops::DerefMut};
 
 use self::{
     atom::{Atom, Downcast, LispType, Pair},
-    closure::{NativeFn, RuntimeFn},
-    memman::{allocate_raw_and_store, sweep},
+    closure::{FnProto, NativeFn, RuntimeClosure, RuntimeFn},
+    memman::allocate_raw_and_store,
 };
 use crate::vm::atom::Tag;
 use smol_str::SmolStr;
-use somok::Somok;
+use somok::{Leaksome, Somok};
 use tinyvec::ArrayVec;
 
 pub mod asm;
@@ -37,7 +37,7 @@ pub enum Error {
 
 #[derive(Debug, Clone)]
 pub struct Frame {
-    fp: Rc<RuntimeFn>,
+    fp: FnProto,
     ip: isize,
     sp: isize,
     bp: isize,
@@ -45,7 +45,7 @@ pub struct Frame {
 
 pub struct Vm {
     pub code: &'static [u8],
-    pub cf: Rc<RuntimeFn>,
+    pub cf: FnProto,
     pub reminder: u64,
     pub ip: isize,
     pub call_stack: Vec<Frame>,
@@ -56,11 +56,11 @@ pub struct Vm {
 }
 
 impl Vm {
-    pub fn new(main: Rc<RuntimeFn>, symbol_table: Vec<SmolStr>) -> Self {
+    pub fn new(main: &'static RuntimeFn, symbol_table: Vec<SmolStr>) -> Self {
         let code = main.assembly;
         Vm {
             code,
-            cf: main,
+            cf: FnProto::Func(main),
             reminder: 0,
             ip: 0,
             call_stack: Vec::new(),
@@ -75,25 +75,29 @@ impl Vm {
         let op = self.decode()?;
         #[cfg(debug_assertions)]
         {
-            let ip = self.ip;
-            println!("stack: {:?}", &self.stack[..self.sp as usize]);
-            println!("{:?}:\t {:?}", ip, &op);
+            println!(
+                "sp: {:?}, bp: {:?}, asp: {:?}",
+                self.sp,
+                self.bp,
+                self.sp + self.bp
+            );
+            println!("stack: {:?}", &self.stack); //&self.stack[..self.sp as usize]);
+            println!("{:?}:\t {:?}", self.ip, &op);
         }
         match op {
             Op::Push(id) => {
-                let constant = self.cf.const_table[id as usize];
+                let constant = self.cf.const_table()[id as usize];
                 self.push(constant)
             }
             Op::Pop => {
-                self.pop().unwrap();
+                self.pop()?;
             }
             Op::LSet(slot) => {
                 let val = self.pop()?;
-                self.stack[(self.bp + slot as isize) as usize] = val.some();
+                self.stack[slot as usize] = val.some();
             }
             Op::LGet(slot) => {
-                let val =
-                    self.stack[(self.bp + slot as isize) as usize].ok_or(Error::UndefinedLocal)?;
+                let val = self.stack[slot as usize].ok_or(Error::UndefinedLocal)?;
                 self.push(val)
             }
             Op::Jump(offset) => {
@@ -115,8 +119,9 @@ impl Vm {
             Op::Call(argc) => self.call(argc)?,
             Op::Return => {
                 let frame = self.call_stack.pop().unwrap();
-                self.code = frame.fp.assembly;
+                self.code = frame.fp.assembly();
                 let ret = self.pop()?;
+                self.cf = frame.fp;
                 self.ip = frame.ip;
                 self.sp = frame.sp;
                 self.bp = frame.bp;
@@ -125,46 +130,12 @@ impl Vm {
             Op::Halt => return true.okay(),
             Op::Add => {
                 let (b, a) = (self.pop()?, self.pop()?);
-                let res = match (a.get_tag(), b.get_tag()) {
-                    (Tag::Int, Tag::Int) => Atom::new_int(a.as_int() + b.as_int()),
-                    (Tag::Int, Tag::Uint) => Atom::new_int(a.as_int() + b.as_uint() as i32),
-                    (Tag::Int, Tag::Float) => Atom::new_int(a.as_int() + b.as_float() as i32),
-                    (Tag::Uint, Tag::Int) => Atom::new_uint(a.as_uint() + b.as_int() as u32),
-                    (Tag::Uint, Tag::Uint) => Atom::new_uint(a.as_uint() + b.as_uint()),
-                    (Tag::Uint, Tag::Float) => Atom::new_uint(a.as_uint() + b.as_float() as u32),
-                    (Tag::Float, Tag::Int) => Atom::new_float(a.as_float() + b.as_int() as f64),
-                    (Tag::Float, Tag::Uint) => Atom::new_float(a.as_float() + b.as_uint() as f64),
-                    (Tag::Float, Tag::Float) => Atom::new_float(a.as_float() + b.as_float()),
-                    (a_tag, b_tag) => {
-                        return Error::TypeMismatch(format!(
-                            "Expected (Float | Int, Float | Int), found ({:?}, {:?})",
-                            a_tag, b_tag
-                        ))
-                        .error();
-                    }
-                };
+                let res = (a + b)?;
                 self.push(res);
             }
             Op::Sub => {
                 let (b, a) = (self.pop()?, self.pop()?);
-                let res = match (a.get_tag(), b.get_tag()) {
-                    (Tag::Int, Tag::Int) => Atom::new_int(a.as_int() - b.as_int()),
-                    (Tag::Int, Tag::Uint) => Atom::new_int(a.as_int() - b.as_uint() as i32),
-                    (Tag::Int, Tag::Float) => Atom::new_int(a.as_int() - b.as_float() as i32),
-                    (Tag::Uint, Tag::Int) => Atom::new_uint(a.as_uint() - b.as_int() as u32),
-                    (Tag::Uint, Tag::Uint) => Atom::new_uint(a.as_uint() - b.as_uint()),
-                    (Tag::Uint, Tag::Float) => Atom::new_uint(a.as_uint() - b.as_float() as u32),
-                    (Tag::Float, Tag::Int) => Atom::new_float(a.as_float() - b.as_int() as f64),
-                    (Tag::Float, Tag::Uint) => Atom::new_float(a.as_float() - b.as_uint() as f64),
-                    (Tag::Float, Tag::Float) => Atom::new_float(a.as_float() - b.as_float()),
-                    (a_tag, b_tag) => {
-                        return Error::TypeMismatch(format!(
-                            "Expected (Float | Int, Float | Int), found ({:?}, {:?})",
-                            a_tag, b_tag
-                        ))
-                        .error()
-                    }
-                };
+                let res = (a - b)?;
                 self.push(res);
             }
             Op::Car => {
@@ -205,41 +176,90 @@ impl Vm {
                     .ok_or(Error::AllocationFailure)?;
                 self.push(pair);
             }
+            Op::UpvalGet(id) => {
+                let a = self.cf.upvalues()[id as usize];
+                self.push(a);
+            }
+            Op::UpvalSet(id) => {
+                let a = self.pop()?;
+                *self.cf.upvalues()[id as usize]
+                    .as_obj()
+                    .to_object::<Atom>()
+                    .deref_mut() = a;
+            }
+            Op::CloseOver => {
+                let f = self.pop()?;
+                let f = f.as_obj().downcast::<&'static RuntimeFn>();
+                let c = RuntimeClosure {
+                    fun: f,
+                    upvalues: RefCell::new(vec![]),
+                }
+                .boxed()
+                .leak();
+                for upval in &f.upvalues {
+                    let at = if upval.local {
+                        let val = self.stack[upval.id].ok_or(Error::UndefinedLocal)?;
+                        self.alloc(val).ok_or(Error::AllocationFailure)?
+                    } else {
+                        self.cf.upvalues()[upval.id]
+                    };
+                    c.upvalues.borrow_mut().push(at);
+                    self.stack[upval.id] = at.some();
+                }
+                let clos = self.alloc(&*c).ok_or(Error::AllocationFailure)?;
+                self.push(clos)
+            }
         }
         false.okay()
     }
 
     fn alloc<T: LispType + 'static>(&mut self, obj: T) -> Option<Atom> {
+        //self.mark();
+        //sweep();
         let ptr = allocate_raw_and_store(obj)?;
         let atom = Atom::new_obj(ptr);
-        self.mark();
-        sweep();
+
         atom.some()
     }
 
-    fn mark(&mut self) {
+    fn _mark(&mut self) {
         for atom in self.stack.iter_mut().flatten() {
             atom.mark()
         }
     }
 
     fn call(&mut self, argc: u32) -> Result<()> {
-        let atom = self.pop().unwrap();
+        let atom = self.pop()?;
         if let Tag::Obj = atom.get_tag() {
             let obj = atom.as_obj();
-            if obj.is::<Rc<RuntimeFn>>() {
-                let func = obj.downcast::<Rc<RuntimeFn>>();
+            if obj.is::<&'static RuntimeFn>() {
+                let func = obj.downcast::<&'static RuntimeFn>();
                 self.sp -= argc as isize;
                 let frame = Frame {
-                    fp: self.cf.clone(),
+                    fp: self.cf,
                     ip: self.ip,
                     sp: self.sp,
                     bp: self.bp,
                 };
-                self.bp = self.sp;
+                self.bp += self.sp;
                 self.sp = 0;
                 self.code = func.assembly;
-                self.cf = func;
+                self.cf = FnProto::Func(func);
+                self.call_stack.push(frame);
+                self.ip = 0;
+            } else if obj.is::<&'static RuntimeClosure>() {
+                let closure = obj.downcast::<&'static RuntimeClosure>();
+                self.sp -= argc as isize;
+                let frame = Frame {
+                    fp: self.cf,
+                    ip: self.ip,
+                    sp: self.sp,
+                    bp: self.bp,
+                };
+                self.bp += self.sp;
+                self.sp = 0;
+                self.code = closure.fun.assembly;
+                self.cf = FnProto::Closure(closure);
                 self.call_stack.push(frame);
                 self.ip = 0;
             } else if obj.is::<NativeFn>() {
@@ -249,6 +269,8 @@ impl Vm {
                     args.push(self.pop()?);
                 }
                 self.push(func.call(&args));
+            } else {
+                return Error::TypeMismatch(format!("Expected Func, found {:?}", atom)).error();
             }
         } else {
             return Error::TypeMismatch(format!("Expected Func, found {:?}", atom)).error();
@@ -265,18 +287,21 @@ impl Vm {
         res
     }
 
-    pub fn push(&mut self, val: Atom) {
+    pub fn push(&mut self, v: Atom) {
         let asp = self.bp + self.sp;
         self.sp += 1;
         if asp >= self.stack.len() as isize {
-            self.stack.push(val.some());
+            self.stack.push(v.some());
         } else {
-            self.stack[asp as usize] = val.some();
+            self.stack[asp as usize] = v.some();
         }
     }
     pub fn pop(&mut self) -> Result<Atom> {
         self.sp -= 1;
         let asp = self.bp + self.sp;
+        if asp < self.bp {
+            return Error::StackUnderflow.error();
+        }
         let mut res = None;
         std::mem::swap(&mut self.stack[asp as usize], &mut res);
         res.ok_or(Error::StackNoValue)
@@ -305,6 +330,11 @@ pub enum Op {
     Car,
     Cdr,
     Cons,
+
+    UpvalGet(u32),
+    UpvalSet(u32),
+
+    CloseOver,
 }
 impl Op {
     pub fn from_be_bytes(bytes: [u8; 8]) -> Result<Self> {
@@ -368,7 +398,23 @@ impl Op {
             13 => Self::Cdr,
             14 => Self::Cons,
 
-            15.. => return Error::Illegal.error(),
+            15 => {
+                let slot = bytes[4..]
+                    .try_into()
+                    .map(u32::from_be_bytes)
+                    .map_err(|_| Error::Illegal)?;
+                Self::UpvalGet(slot)
+            }
+            16 => {
+                let slot = bytes[4..]
+                    .try_into()
+                    .map(u32::from_be_bytes)
+                    .map_err(|_| Error::Illegal)?;
+                Self::UpvalSet(slot)
+            }
+            17 => Self::CloseOver,
+
+            18.. => return Error::Illegal.error(),
         }
         .okay()
     }

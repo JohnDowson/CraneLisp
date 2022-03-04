@@ -69,7 +69,7 @@ pub fn repl(time: bool, ast: bool, tt: bool, _clir: bool) -> Result<()> {
 
         let t2 = Instant::now();
 
-        let mut vm = vm::Vm::new(funcs.get(&0).unwrap().clone(), symbol_table);
+        let mut vm = vm::Vm::new(*funcs.get(&0).unwrap(), symbol_table);
 
         let mut halt = false;
         while !halt {

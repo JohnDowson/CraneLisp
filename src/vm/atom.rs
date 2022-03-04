@@ -1,11 +1,16 @@
 use super::{
-    closure::{NativeFn, RuntimeFn},
+    closure::{NativeFn, RuntimeClosure, RuntimeFn},
     memman::{allocate, mark},
+    Error, Result,
 };
 use cl_alloc::ObjectHeader;
 use enumn::N;
 use somok::{Leaksome, Somok};
-use std::{fmt::Debug, ptr::NonNull, rc::Rc};
+use std::{
+    fmt::Debug,
+    ops::{Add, Deref, DerefMut, Div, Mul, Sub},
+    ptr::NonNull,
+};
 
 #[repr(u8)]
 #[derive(Debug)]
@@ -97,15 +102,16 @@ impl Debug for Atom {
             Tag::Uint => write!(f, "u{:?}", self.as_uint()),
             Tag::Obj => {
                 let ptr = self.as_obj();
-                let dbg = match ptr.type_id() {
+                let dbg = match ptr.type_tag() {
                     Type::Atom => ptr.debug::<Atom>(),
                     Type::Pair => ptr.debug::<Pair>(),
                     Type::Str => todo!(),
                     Type::Vector => todo!(),
-                    Type::Func => ptr.debug::<Rc<RuntimeFn>>(),
+                    Type::Func => ptr.debug::<&'static RuntimeFn>(),
                     Type::NativeFunc => ptr.debug::<NativeFn>(),
+                    Type::Closure => ptr.debug::<&'static RuntimeClosure>(),
                 };
-                write!(f, "{:?}", dbg)
+                write!(f, "&{:?}", dbg)
             }
             Tag::Sym => write!(f, "Symbol {:?}", self.as_sym()),
             Tag::Ptr => write!(f, "Ptr {:?}", self.as_ptr()),
@@ -209,9 +215,13 @@ impl Atom {
         }
     }
 
-    pub fn as_obj(&self) -> *mut ObjectHeader {
+    pub fn as_obj(&self) -> NonNull<ObjectHeader> {
         match self.get_tag() {
-            Tag::Obj => (self.0 as u64 & Self::MASK_PTR_PAYLOAD) as _,
+            Tag::Obj => unsafe {
+                NonNull::new_unchecked(
+                    (self.0 as u64 & Self::MASK_PTR_PAYLOAD) as *mut ObjectHeader,
+                )
+            },
             tag => panic!("Can't cast {:?} as Obj", tag),
         }
     }
@@ -231,27 +241,30 @@ impl Atom {
     }
 
     pub fn mark(&mut self) {
-        if let Tag::Obj = self.get_tag() {
-            if mark(self.as_ptr()) {
-                return;
-            }
-            unsafe {
-                match Type::n((&*self.as_obj()).ty()) {
-                    Some(ty) => match ty {
-                        Type::Atom => (),
-                        Type::Pair => {
-                            let pair = &mut *self.as_ptr().cast::<Pair>();
-                            pair.car.mark();
-                            pair.cdr.mark();
-                        }
-                        Type::Str => todo!(),
-                        Type::Vector => todo!(),
-                        Type::Func => todo!(),
-                        Type::NativeFunc => todo!(),
-                    },
-                    None => panic!("Invalid object type tag"),
+        match self.get_tag() {
+            Tag::Ptr => {
+                if !mark(self.as_ptr()) {
+                    return;
                 }
+                self.as_obj().type_tag();
             }
+            Tag::Obj => {
+                let ty = self.as_obj().type_tag();
+                match ty {
+                    Type::Atom => self.as_obj().to_object::<Atom>().mark(),
+                    Type::Pair => {
+                        let mut pair = self.as_obj().to_object::<Pair>();
+                        pair.car.mark();
+                        pair.cdr.mark();
+                    }
+                    Type::Str => todo!(),
+                    Type::Vector => todo!(),
+                    Type::Func => todo!(),
+                    Type::NativeFunc => todo!(),
+                    Type::Closure => todo!(),
+                };
+            }
+            _ => (),
         }
     }
 
@@ -260,6 +273,455 @@ impl Atom {
     }
 }
 
+impl Add for Atom {
+    type Output = Result<Atom>;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self.get_tag(), rhs.get_tag()) {
+            (Tag::Int, Tag::Int) => Atom::new_int(self.as_int() + rhs.as_int()),
+            (Tag::Int, Tag::Uint) => Atom::new_int(self.as_int() + rhs.as_uint() as i32),
+            (Tag::Int, Tag::Float) => Atom::new_int(self.as_int() + rhs.as_float() as i32),
+            (Tag::Int, Tag::Obj) => {
+                let rhs = rhs.as_obj();
+                if rhs.is::<Atom>() {
+                    let rhs = rhs.downcast::<Atom>();
+                    (self + rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Int, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Uint, Tag::Int) => Atom::new_uint(self.as_uint() + rhs.as_int() as u32),
+            (Tag::Uint, Tag::Uint) => Atom::new_uint(self.as_uint() + rhs.as_uint()),
+            (Tag::Uint, Tag::Float) => Atom::new_uint(self.as_uint() + rhs.as_float() as u32),
+            (Tag::Uint, Tag::Obj) => {
+                let rhs = rhs.as_obj();
+                if rhs.is::<Atom>() {
+                    let rhs = rhs.downcast::<Atom>();
+                    (self + rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Uint, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Float, Tag::Int) => Atom::new_float(self.as_float() + rhs.as_int() as f64),
+            (Tag::Float, Tag::Uint) => Atom::new_float(self.as_float() + rhs.as_uint() as f64),
+            (Tag::Float, Tag::Float) => Atom::new_float(self.as_float() + rhs.as_float()),
+            (Tag::Float, Tag::Obj) => {
+                let rhs = rhs.as_obj();
+                if rhs.is::<Atom>() {
+                    let rhs = rhs.downcast::<Atom>();
+                    (self + rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Float, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Obj) => {
+                let this = self.as_obj();
+                let rhs = rhs.as_obj();
+                if this.is::<Atom>() && rhs.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    let rhs = rhs.downcast::<Atom>();
+                    (this + rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Int) => {
+                let this = self.as_obj();
+                if this.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    (this + rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Int)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Uint) => {
+                let this = self.as_obj();
+                if this.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    (this + rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Int)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Float) => {
+                let this = self.as_obj();
+                if this.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    (this + rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Int)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (a_tag, b_tag) => {
+                return Error::TypeMismatch(format!(
+                    "Expected (Float | Int, Float | Int), found ({:?}, {:?})",
+                    a_tag, b_tag
+                ))
+                .error();
+            }
+        }
+        .okay()
+    }
+}
+
+impl Sub for Atom {
+    type Output = Result<Atom>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        match (self.get_tag(), rhs.get_tag()) {
+            (Tag::Int, Tag::Int) => Atom::new_int(self.as_int() - rhs.as_int()),
+            (Tag::Int, Tag::Uint) => Atom::new_int(self.as_int() - rhs.as_uint() as i32),
+            (Tag::Int, Tag::Float) => Atom::new_int(self.as_int() - rhs.as_float() as i32),
+            (Tag::Int, Tag::Obj) => {
+                let rhs = rhs.as_obj();
+                if rhs.is::<Atom>() {
+                    let rhs = rhs.downcast::<Atom>();
+                    (self - rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Int, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Uint, Tag::Int) => Atom::new_uint(self.as_uint() - rhs.as_int() as u32),
+            (Tag::Uint, Tag::Uint) => Atom::new_uint(self.as_uint() - rhs.as_uint()),
+            (Tag::Uint, Tag::Float) => Atom::new_uint(self.as_uint() - rhs.as_float() as u32),
+            (Tag::Uint, Tag::Obj) => {
+                let rhs = rhs.as_obj();
+                if rhs.is::<Atom>() {
+                    let rhs = rhs.downcast::<Atom>();
+                    (self - rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Uint, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Float, Tag::Int) => Atom::new_float(self.as_float() - rhs.as_int() as f64),
+            (Tag::Float, Tag::Uint) => Atom::new_float(self.as_float() - rhs.as_uint() as f64),
+            (Tag::Float, Tag::Float) => Atom::new_float(self.as_float() - rhs.as_float()),
+            (Tag::Float, Tag::Obj) => {
+                let rhs = rhs.as_obj();
+                if rhs.is::<Atom>() {
+                    let rhs = rhs.downcast::<Atom>();
+                    (self - rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Float, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Obj) => {
+                let this = self.as_obj();
+                let rhs = rhs.as_obj();
+                if this.is::<Atom>() && rhs.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    let rhs = rhs.downcast::<Atom>();
+                    (this - rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Int) => {
+                let this = self.as_obj();
+                if this.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    (this - rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Int)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Uint) => {
+                let this = self.as_obj();
+                if this.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    (this - rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Int)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Float) => {
+                let this = self.as_obj();
+                if this.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    (this - rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Int)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (a_tag, b_tag) => {
+                return Error::TypeMismatch(format!(
+                    "Expected (Float | Int, Float | Int), found ({:?}, {:?})",
+                    a_tag, b_tag
+                ))
+                .error();
+            }
+        }
+        .okay()
+    }
+}
+
+impl Div for Atom {
+    type Output = Result<Atom>;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        match (self.get_tag(), rhs.get_tag()) {
+            (Tag::Int, Tag::Int) => Atom::new_int(self.as_int() / rhs.as_int()),
+            (Tag::Int, Tag::Uint) => Atom::new_int(self.as_int() / rhs.as_uint() as i32),
+            (Tag::Int, Tag::Float) => Atom::new_int(self.as_int() / rhs.as_float() as i32),
+            (Tag::Int, Tag::Obj) => {
+                let rhs = rhs.as_obj();
+                if rhs.is::<Atom>() {
+                    let rhs = rhs.downcast::<Atom>();
+                    (self / rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Int, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Uint, Tag::Int) => Atom::new_uint(self.as_uint() / rhs.as_int() as u32),
+            (Tag::Uint, Tag::Uint) => Atom::new_uint(self.as_uint() / rhs.as_uint()),
+            (Tag::Uint, Tag::Float) => Atom::new_uint(self.as_uint() / rhs.as_float() as u32),
+            (Tag::Uint, Tag::Obj) => {
+                let rhs = rhs.as_obj();
+                if rhs.is::<Atom>() {
+                    let rhs = rhs.downcast::<Atom>();
+                    (self / rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Uint, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Float, Tag::Int) => Atom::new_float(self.as_float() / rhs.as_int() as f64),
+            (Tag::Float, Tag::Uint) => Atom::new_float(self.as_float() / rhs.as_uint() as f64),
+            (Tag::Float, Tag::Float) => Atom::new_float(self.as_float() / rhs.as_float()),
+            (Tag::Float, Tag::Obj) => {
+                let rhs = rhs.as_obj();
+                if rhs.is::<Atom>() {
+                    let rhs = rhs.downcast::<Atom>();
+                    (self / rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Float, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Obj) => {
+                let this = self.as_obj();
+                let rhs = rhs.as_obj();
+                if this.is::<Atom>() && rhs.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    let rhs = rhs.downcast::<Atom>();
+                    (this / rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Int) => {
+                let this = self.as_obj();
+                if this.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    (this / rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Int)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Uint) => {
+                let this = self.as_obj();
+                if this.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    (this / rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Int)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Float) => {
+                let this = self.as_obj();
+                if this.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    (this / rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Int)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (a_tag, b_tag) => {
+                return Error::TypeMismatch(format!(
+                    "Expected (Float | Int, Float | Int), found ({:?}, {:?})",
+                    a_tag, b_tag
+                ))
+                .error();
+            }
+        }
+        .okay()
+    }
+}
+
+impl Mul for Atom {
+    type Output = Result<Atom>;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        match (self.get_tag(), rhs.get_tag()) {
+            (Tag::Int, Tag::Int) => Atom::new_int(self.as_int() * rhs.as_int()),
+            (Tag::Int, Tag::Uint) => Atom::new_int(self.as_int() * rhs.as_uint() as i32),
+            (Tag::Int, Tag::Float) => Atom::new_int(self.as_int() * rhs.as_float() as i32),
+            (Tag::Int, Tag::Obj) => {
+                let rhs = rhs.as_obj();
+                if rhs.is::<Atom>() {
+                    let rhs = rhs.downcast::<Atom>();
+                    (self * rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Int, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Uint, Tag::Int) => Atom::new_uint(self.as_uint() * rhs.as_int() as u32),
+            (Tag::Uint, Tag::Uint) => Atom::new_uint(self.as_uint() * rhs.as_uint()),
+            (Tag::Uint, Tag::Float) => Atom::new_uint(self.as_uint() * rhs.as_float() as u32),
+            (Tag::Uint, Tag::Obj) => {
+                let rhs = rhs.as_obj();
+                if rhs.is::<Atom>() {
+                    let rhs = rhs.downcast::<Atom>();
+                    (self * rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Uint, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Float, Tag::Int) => Atom::new_float(self.as_float() * rhs.as_int() as f64),
+            (Tag::Float, Tag::Uint) => Atom::new_float(self.as_float() * rhs.as_uint() as f64),
+            (Tag::Float, Tag::Float) => Atom::new_float(self.as_float() * rhs.as_float()),
+            (Tag::Float, Tag::Obj) => {
+                let rhs = rhs.as_obj();
+                if rhs.is::<Atom>() {
+                    let rhs = rhs.downcast::<Atom>();
+                    (self * rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Float, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Obj) => {
+                let this = self.as_obj();
+                let rhs = rhs.as_obj();
+                if this.is::<Atom>() && rhs.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    let rhs = rhs.downcast::<Atom>();
+                    (this * rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Obj)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Int) => {
+                let this = self.as_obj();
+                if this.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    (this * rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Int)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Uint) => {
+                let this = self.as_obj();
+                if this.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    (this * rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Int)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (Tag::Obj, Tag::Float) => {
+                let this = self.as_obj();
+                if this.is::<Atom>() {
+                    let this = this.downcast::<Atom>();
+                    (this * rhs)?
+                } else {
+                    return Error::TypeMismatch(
+                        "Expected (Float | Int, Float | Int), found (Obj, Int)".to_string(),
+                    )
+                    .error();
+                }
+            }
+            (a_tag, b_tag) => {
+                return Error::TypeMismatch(format!(
+                    "Expected (Float | Int, Float | Int), found ({:?}, {:?})",
+                    a_tag, b_tag
+                ))
+                .error();
+            }
+        }
+        .okay()
+    }
+}
+
+#[derive(Clone)]
 pub struct Pair {
     pub car: Atom,
     pub cdr: Atom,
@@ -290,7 +752,7 @@ impl LispType for Pair {
         Type::Pair
     }
 }
-impl LispType for Rc<RuntimeFn> {
+impl LispType for &'static RuntimeFn {
     fn type_tag() -> Type {
         Type::Func
     }
@@ -298,6 +760,11 @@ impl LispType for Rc<RuntimeFn> {
 impl LispType for NativeFn {
     fn type_tag() -> Type {
         Type::NativeFunc
+    }
+}
+impl LispType for &'static RuntimeClosure {
+    fn type_tag() -> Type {
+        Type::Closure
     }
 }
 
@@ -310,6 +777,7 @@ pub enum Type {
     Vector,
     Func,
     NativeFunc,
+    Closure,
 }
 impl Type {
     pub fn size(&self) -> usize {
@@ -318,12 +786,14 @@ impl Type {
             Type::Pair => 16,
             Type::Str => 24,
             Type::Vector => 24,
-            Type::Func => std::mem::size_of::<Rc<RuntimeFn>>(),
+            Type::Func => std::mem::size_of::<&'static RuntimeFn>(),
             Type::NativeFunc => std::mem::size_of::<NativeFn>(),
+            Type::Closure => std::mem::size_of::<RuntimeClosure>(),
         }
     }
 }
 
+/// This is a reference type
 #[repr(transparent)]
 pub struct Object<T>(*mut T);
 impl<T: LispType + 'static> Object<T> {
@@ -340,29 +810,60 @@ impl<T: LispType + 'static> Object<T> {
     pub fn type_tag(&self) -> Type {
         T::type_tag()
     }
-    pub fn inner(self) -> T
-    where
-        T: Copy,
-    {
-        unsafe { *self.0 }
+}
+impl<T> Deref for Object<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.0 }
+    }
+}
+impl<T> DerefMut for Object<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.0 }
     }
 }
 
 pub trait Downcast {
-    fn downcast<T: LispType>(&self) -> T;
-    fn type_id(&self) -> Type;
-    fn is<T: LispType>(&self) -> bool {
-        self.type_id() == T::type_tag()
+    fn downcast<T>(self) -> T
+    where
+        Self: Sized,
+        T: LispType + Clone + 'static,
+    {
+        self.to_object::<T>().deref().clone()
     }
-    fn as_object<T: LispType + 'static>(&self) -> Object<T>;
-    fn debug<T: LispType + Debug + 'static>(&self) -> &dyn Debug;
+
+    fn type_tag(self) -> Type;
+
+    fn is<T>(self) -> bool
+    where
+        Self: Sized,
+        T: LispType,
+    {
+        self.type_tag() == T::type_tag()
+    }
+
+    fn to_object<T>(self) -> Object<T>
+    where
+        T: LispType + 'static;
+
+    fn debug<'s, T>(self) -> &'s dyn Debug
+    where
+        T: LispType + Debug + 'static;
 }
 
-impl Downcast for *mut ObjectHeader {
-    fn downcast<T: LispType>(&self) -> T {
-        let ty = self.type_id();
+impl Downcast for NonNull<ObjectHeader> {
+    fn type_tag(self) -> Type {
+        Type::n(unsafe { &*self.as_ptr() }.ty()).expect("Invalid type")
+    }
+
+    fn to_object<T>(self) -> Object<T>
+    where
+        T: LispType + 'static,
+    {
+        let ty = self.type_tag();
         if ty == T::type_tag() {
-            unsafe { self.add(1).cast::<T>().read() }
+            unsafe { Object::from_ptr(self.as_ptr().add(1).cast::<T>()) }
         } else {
             panic!(
                 "Invalid downcast, can't cast `{:?}` to `{:?}`",
@@ -372,27 +873,13 @@ impl Downcast for *mut ObjectHeader {
         }
     }
 
-    fn type_id(&self) -> Type {
-        Type::n(unsafe { &**self }.ty()).expect("Invalid type")
-    }
-
-    fn as_object<T: LispType + 'static>(&self) -> Object<T> {
-        let ty = self.type_id();
+    fn debug<'s, T>(self) -> &'s dyn Debug
+    where
+        T: LispType + Debug + 'static,
+    {
+        let ty = self.type_tag();
         if ty == T::type_tag() {
-            unsafe { Object::from_ptr(self.add(1).cast::<T>()) }
-        } else {
-            panic!(
-                "Invalid downcast, can't cast `{:?}` to `{:?}`",
-                ty,
-                T::type_tag()
-            )
-        }
-    }
-
-    fn debug<T: LispType + Debug + 'static>(&self) -> &dyn Debug {
-        let ty = self.type_id();
-        if ty == T::type_tag() {
-            unsafe { &*self.add(1).cast::<T>() }
+            unsafe { &*self.as_ptr().add(1).cast::<T>() }
         } else {
             panic!(
                 "Invalid downcast, can't cast `{:?}` to `{:?}`",
@@ -408,14 +895,17 @@ static ASSERT_HT_SIZE: [(); 8] = [(); std::mem::size_of::<Type>()];
 
 #[test]
 fn test() {
-    use crate::vm::memman::allocate_raw;
-    let p = allocate_raw(Type::Pair).unwrap();
+    use crate::vm::memman::allocate_raw_and_store;
+    let p = allocate_raw_and_store(Pair::new(Atom::new_float(4.20), Atom::new_int(69))).unwrap();
 
     println!("{:?}", p);
     let a = Atom::new_obj(p);
+    let mut pair = a.as_obj().to_object::<Pair>();
+
     println!("0x{:0x?}", a.0);
     println!("{:?}", a.as_obj());
     println!("{:?}", a);
-
+    pair.car = Atom::new_uint(96);
+    println!("{:?}", a);
     panic!("{:?}", std::mem::size_of::<Type>());
 }
